@@ -1,4 +1,4 @@
-name: Lint
+name: CI
 
 on:
   pull_request:
@@ -7,22 +7,30 @@ on:
       - 'ruff.toml'
       - 'tox.ini'
       - 'pyproject.toml'
+      - '.github/workflows/lint.yml'
 
 jobs:
-  lint:
+  ci:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v3
+        uses: actions/setup-python@v7
         with:
           python-version: '3.10'
 
       - name: Install tox
         run: pip install tox
 
-      - name: Run lint
-        run: tox
+      - name: Lint
+        run: tox -e ruff
+
+      - name: Test
+        run: tox -e pytest
