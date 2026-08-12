@@ -8,6 +8,7 @@ on:
       - 'tox.ini'
       - 'pyproject.toml'
       - '.github/workflows/lint.yml'
+      - 'target_qbwc/tests/fixtures/**'
 
 jobs:
   ci:
