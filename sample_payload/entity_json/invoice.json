@@ -1,0 +1,40 @@
+[
+  {
+    "externalId": "entity-inv-001",
+    "CustomerRef": {
+      "FullName": "HG-TGT-ENTITY-001"
+    },
+    "RefNumber": "INV-ENT-001",
+    "TxnDate": "2026-08-12",
+    "Memo": "Sample invoice from entity JSON",
+    "InvoiceLineAdd": [
+      {
+        "externalId": "entity-inv-line-001",
+        "ItemRef": {
+          "FullName": "HG-TGT-ITEM-ENTITY-001"
+        },
+        "Desc": "Sample line 001",
+        "Quantity": "2",
+        "Rate": "24.99"
+      }
+    ]
+  },
+  {
+    "externalId": "entity-inv-002",
+    "CustomerRef": {
+      "FullName": "HG-TGT-ENTITY-002"
+    },
+    "RefNumber": "INV-ENT-002",
+    "TxnDate": "2026-08-12",
+    "InvoiceLineAdd": [
+      {
+        "externalId": "entity-inv-line-002",
+        "ItemRef": {
+          "FullName": "HG-TGT-ITEM-ENTITY-002"
+        },
+        "Quantity": "1",
+        "Rate": "18.00"
+      }
+    ]
+  }
+]

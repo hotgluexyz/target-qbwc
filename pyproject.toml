@@ -14,8 +14,7 @@ keywords = ["ELT", "QuickBooks", "QBWC"]
 dependencies = [
     "hotglue-singer-sdk>=1.0.40",
     "hotglue-etl-exceptions>=0.1.0",
-    "requests>=2.28.0",
-    "qbwc-common @ file:../qbwc-common",
+    "qbwc-common @ git+https://github.com/hotgluexyz/qbwc-common.git@main",
 ]
 
 [project.optional-dependencies]

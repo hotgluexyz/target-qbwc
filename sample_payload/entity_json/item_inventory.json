@@ -1,0 +1,36 @@
+[
+  {
+    "externalId": "entity-item-001",
+    "Name": "HG-TGT-ITEM-ENTITY-001",
+    "SalesDesc": "Sample inventory item 001",
+    "SalesPrice": "24.99",
+    "PurchaseDesc": "Sample inventory item 001",
+    "PurchaseCost": "12.50",
+    "IncomeAccountRef": {
+      "FullName": "Merchandise Sales"
+    },
+    "COGSAccountRef": {
+      "FullName": "*Cost of Goods Sold"
+    },
+    "AssetAccountRef": {
+      "FullName": "Inventory Asset"
+    }
+  },
+  {
+    "externalId": "entity-item-002",
+    "Name": "HG-TGT-ITEM-ENTITY-002",
+    "SalesDesc": "Sample inventory item 002",
+    "SalesPrice": "18.00",
+    "PurchaseDesc": "Sample inventory item 002",
+    "PurchaseCost": "9.00",
+    "IncomeAccountRef": {
+      "FullName": "Merchandise Sales"
+    },
+    "COGSAccountRef": {
+      "FullName": "*Cost of Goods Sold"
+    },
+    "AssetAccountRef": {
+      "FullName": "Inventory Asset"
+    }
+  }
+]

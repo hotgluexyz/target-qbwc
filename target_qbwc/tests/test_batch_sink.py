@@ -1,4 +1,4 @@
-"""Offline tests for CustomersSink batch response handling."""
+"""Offline tests for QbwcBatchSink staging and batch response handling."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from qbwc_common import (
 )
 
 from target_qbwc.sinks import CustomersSink
+from target_qbwc.tests.conftest import AddOnlyCustomerSink
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 SCHEMAS = load_qbd_xml_schemas()
@@ -55,6 +56,78 @@ def _staged_record(
             }
         },
     }
+
+
+def test_strip_hotglue_metadata_removes_external_id(customers_sink: CustomersSink):
+    """Strip externalId before QBXML encoding."""
+    payload, external_id = customers_sink.strip_hotglue_metadata(
+        {
+            "externalId": "cust-001",
+            "Name": "HG-TEST-001",
+        }
+    )
+
+    assert external_id == "cust-001"
+    assert payload == {"Name": "HG-TEST-001"}
+
+
+def test_add_only_process_batch_record_includes_request_element(
+    add_only_customer_sink: AddOnlyCustomerSink,
+):
+    """Stage add-only records with a prebuilt CustomerAddRq request element."""
+    staged = add_only_customer_sink.process_batch_record(
+        {
+            "externalId": "cust-001",
+            "Name": "HG-TEST-001",
+            "CompanyName": "Test Co",
+        },
+        0,
+    )
+
+    assert staged["request_id"] == "0"
+    assert staged["external_id"] == "cust-001"
+    assert staged["payload"] == {"Name": "HG-TEST-001", "CompanyName": "Test Co"}
+    assert staged["request_element"] == {
+        "CustomerAddRq": {
+            "@requestID": "0",
+            "CustomerAdd": {"Name": "HG-TEST-001", "CompanyName": "Test Co"},
+        }
+    }
+
+
+def test_upsert_process_batch_record_omits_request_element(customers_sink: CustomersSink):
+    """Stage upsert records without a write request element until lookup completes."""
+    staged = customers_sink.process_batch_record(
+        {
+            "externalId": "cust-001",
+            "Name": "HG-TEST-001",
+            "CompanyName": "Test Co",
+        },
+        0,
+    )
+
+    assert staged["request_id"] == "0"
+    assert staged["external_id"] == "cust-001"
+    assert staged["payload"] == {"Name": "HG-TEST-001", "CompanyName": "Test Co"}
+    assert "request_element" not in staged
+
+
+def test_process_batch_record_stores_overlong_name_as_preprocess_error(
+    add_only_customer_sink: AddOnlyCustomerSink,
+):
+    """Stage invalid XSD records without raising so the SDK batch path stays quiet."""
+    staged = add_only_customer_sink.process_batch_record(
+        {
+            "Name": "THIS-NAME-IS-WAY-TOO-LONG-FOR-QUICKBOOKS-CUSTOMER-FIELD",
+            "CompanyName": "Invalid XSD length",
+        },
+        0,
+    )
+
+    assert "preprocess_error" in staged
+    message = str(staged["preprocess_error"]).lower()
+    assert "name" in message
+    assert "41" in message
 
 
 def test_handle_batch_response_mixed_success_and_failure(customers_sink: CustomersSink):

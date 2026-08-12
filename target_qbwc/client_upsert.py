@@ -6,27 +6,9 @@ from typing import Any
 
 from hotglue_etl_exceptions import InvalidPayloadError
 
-from qbwc_common import normalize_rs_list, parse_rs_element
+from qbwc_common import filter_dict_for_mod, get_mod_element_names, normalize_rs_list, parse_rs_element
 
 from target_qbwc.client import QbwcBatchSink
-
-# *Ret fields that are not valid on *Mod payloads and should be stripped before merge.
-QUERY_ONLY_RET_FIELDS = frozenset(
-    {
-        "TimeCreated",
-        "TimeModified",
-        "FullName",
-        "Sublevel",
-        "Balance",
-        "TotalBalance",
-        "ExternalGUID",
-        "BillAddressBlock",
-        "ShipAddressBlock",
-        "ContactsRet",
-        "AdditionalNotesRet",
-        "DataExtRet",
-    }
-)
 
 
 def _extract_ret_entities(rs_element: dict[str, Any], ret_element_name: str) -> list[dict[str, Any]]:
@@ -60,11 +42,17 @@ def _format_lookup_values(payload: dict[str, Any], lookup_fields: list[tuple[str
     return {query_element: value}
 
 
+def _format_external_id_log(external_id: str | None) -> str:
+    """Format externalId for per-record log lines when present."""
+    if external_id:
+        return f"externalId: {external_id}, "
+    return ""
+
+
 class QbwcUpsertBatchSink(QbwcBatchSink):
     """Batch sink with query-before-write upsert support for add and mod operations."""
 
     lookup_fields: list[tuple[str, str]]
-    query_only_ret_fields: frozenset[str] = QUERY_ONLY_RET_FIELDS
     _batch_item_error_keys = ("ambiguous_error", "preprocess_error")
 
     @property
@@ -98,10 +86,14 @@ class QbwcUpsertBatchSink(QbwcBatchSink):
         return f"{self.qbxml_entity}Mod"
 
     def process_batch_record(self, record: dict, index: int) -> dict:
-        """Strip metadata and validate the payload before lookup and write staging."""
-        staged = super().process_batch_record(record, index)
-        staged.pop("request_element", None)
-        return staged
+        """Strip metadata and stage the payload without add-only XSD validation."""
+        payload, external_id = self.strip_hotglue_metadata(record)
+        payload = self.build_request_element(payload)
+        return {
+            "request_id": str(index),
+            "external_id": external_id,
+            "payload": payload,
+        }
 
     def _build_lookup_query_element(self, payload: dict[str, Any], request_id: str) -> dict[str, Any] | None:
         """Build one *QueryRq element from the first available lookup field."""
@@ -134,31 +126,81 @@ class QbwcUpsertBatchSink(QbwcBatchSink):
 
         return {"matches": [], "query_failed": True}
 
-    def _strip_ret_for_mod(self, ret_entity: dict[str, Any]) -> dict[str, Any]:
-        """Remove query-only *Ret fields before building a mod payload."""
-        return {
-            key: value
-            for key, value in ret_entity.items()
-            if key not in self.query_only_ret_fields
-        }
-
     def _merge_for_mod(self, existing: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
-        """Overlay incoming fields onto the queried record for a mod request."""
-        merged = self._strip_ret_for_mod(dict(existing))
+        """Overlay incoming fields onto the queried record for a mod request.
+
+        Query responses return fat *Ret objects. Filter existing to the *Mod XSD
+        allowlist so Ret-only keys (balances, timestamps, line arrays) are not
+        carried into the mod payload. Incoming user payload is not filtered here:
+        unknown or Ret-shaped keys must fail encode validation in _build_write_request
+        rather than be silently dropped.
+        """
+        allowed = get_mod_element_names(self.qbd_xml_schemas, self.entity_mod_name)
+        merged = filter_dict_for_mod(existing, allowed)
         overlay = dict(incoming)
         overlay.pop("ListID", None)
         overlay.pop("TxnID", None)
         merged.update(overlay)
-        merged["ListID"] = existing["ListID"]
+        merged[self.id_field] = existing[self.id_field]
         merged["EditSequence"] = existing["EditSequence"]
         return merged
 
+    def _filter_query_matches(
+        self,
+        matches: list[dict[str, Any]],
+        payload: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """Allow sinks to post-filter lookup matches before add/mod selection."""
+        return matches
+
     def _build_ambiguous_match_error(self, payload: dict[str, Any]) -> InvalidPayloadError:
-        """Build the legacy-style error for multiple lookup matches."""
+        """Build the error for multiple lookup matches."""
         lookup = _format_lookup_values(payload, self.lookup_fields)
         return InvalidPayloadError(
             "Unable to create or update record, as there are multiple existing records "
             f"in Quickbooks with the same identifiers {lookup}"
+        )
+
+    def _log_write_decision(
+        self,
+        staged: dict[str, Any],
+        write_op: str,
+        existing_id: str | None = None,
+    ) -> None:
+        """Log the add vs mod decision for one staged record."""
+        payload = staged["payload"]
+        external_id_log = _format_external_id_log(staged.get("external_id"))
+        lookup_match = _first_lookup_match(payload, self.lookup_fields)
+
+        if write_op == "mod":
+            lookup_fragment = ""
+            if lookup_match is not None:
+                _, query_element, value = lookup_match
+                lookup_fragment = f"lookup matched {query_element}={value}, "
+            self.logger.info(
+                "%s %sid: %s, %sop: mod",
+                self.name,
+                lookup_fragment,
+                existing_id,
+                external_id_log,
+            )
+            return
+
+        if lookup_match is None:
+            self.logger.info(
+                "%s no lookup field, %sop: add",
+                self.name,
+                external_id_log,
+            )
+            return
+
+        _, query_element, value = lookup_match
+        self.logger.info(
+            "%s lookup no match %s=%s, %sop: add",
+            self.name,
+            query_element,
+            value,
+            external_id_log,
         )
 
     def _build_write_request(
@@ -167,12 +209,17 @@ class QbwcUpsertBatchSink(QbwcBatchSink):
         query_outcome: dict[str, Any],
     ) -> dict[str, Any]:
         """Choose add or mod and build the write request element for one staged record."""
-        matches = query_outcome.get("matches", [])
+        matches = self._filter_query_matches(
+            query_outcome.get("matches", []),
+            staged["payload"],
+        )
         if len(matches) > 1:
             return {"ambiguous_error": self._build_ambiguous_match_error(staged["payload"])}
 
         if len(matches) == 1:
-            mod_payload = self._merge_for_mod(matches[0], staged["payload"])
+            existing = matches[0]
+            self._log_write_decision(staged, "mod", existing.get(self.id_field))
+            mod_payload = self._merge_for_mod(existing, staged["payload"])
             request_element = {
                 self.mod_request_element_name: {
                     "@requestID": staged["request_id"],
@@ -186,6 +233,7 @@ class QbwcUpsertBatchSink(QbwcBatchSink):
                 "preprocess_error": self._validate_request_element(request_element),
             }
 
+        self._log_write_decision(staged, "add")
         request_element = self._build_request_element(staged["payload"], int(staged["request_id"]))
         return {
             "request_element": request_element,
@@ -270,21 +318,22 @@ class QbwcUpsertBatchSink(QbwcBatchSink):
 
     def make_batch_request(self, records: list[dict]) -> dict:
         """Run batched lookup queries then a batched add/mod write for the batch."""
-        items: list[dict[str, Any]] = []
+        items_by_request_id: dict[str, dict[str, Any]] = {}
         valid_records = [record for record in records if "preprocess_error" not in record]
 
         for staged in records:
             if "preprocess_error" in staged:
-                items.append(
-                    {
-                        "record": staged,
-                        "preprocess_error": staged["preprocess_error"],
-                    }
-                )
+                items_by_request_id[staged["request_id"]] = {
+                    "record": staged,
+                    "preprocess_error": staged["preprocess_error"],
+                }
 
         if not valid_records:
-            return {"items": items}
+            return {
+                "items": [items_by_request_id[staged["request_id"]] for staged in records]
+            }
 
+        self.logger.info("%s batch lookup: %d record(s)", self.name, len(valid_records))
         query_outcomes = self._execute_lookup_queries(valid_records)
         write_staged: list[dict[str, Any]] = []
 
@@ -293,30 +342,39 @@ class QbwcUpsertBatchSink(QbwcBatchSink):
 
             ambiguous_error = write_request.get("ambiguous_error")
             if ambiguous_error is not None:
-                items.append(
-                    {
-                        "record": staged,
-                        "ambiguous_error": ambiguous_error,
-                    }
-                )
+                items_by_request_id[staged["request_id"]] = {
+                    "record": staged,
+                    "ambiguous_error": ambiguous_error,
+                }
                 continue
 
             preprocess_error = write_request.get("preprocess_error")
             if preprocess_error is not None:
-                items.append(
-                    {
-                        "record": staged,
-                        "preprocess_error": preprocess_error,
-                    }
-                )
+                items_by_request_id[staged["request_id"]] = {
+                    "record": staged,
+                    "preprocess_error": preprocess_error,
+                }
                 continue
 
             write_staged.append({**staged, **write_request})
 
         if write_staged:
-            items.extend(self._execute_write_batch(write_staged))
+            add_count = sum(1 for staged in write_staged if staged.get("write_op") == "add")
+            mod_count = sum(1 for staged in write_staged if staged.get("write_op") == "mod")
+            self.logger.info(
+                "%s batch write: %d record(s) (%d add, %d mod)",
+                self.name,
+                len(write_staged),
+                add_count,
+                mod_count,
+            )
+            for item in self._execute_write_batch(write_staged):
+                staged = item["record"]
+                items_by_request_id[staged["request_id"]] = item
 
-        return {"items": items}
+        return {
+            "items": [items_by_request_id[staged["request_id"]] for staged in records]
+        }
 
     def _enrich_success_state(
         self,

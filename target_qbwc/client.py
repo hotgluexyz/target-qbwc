@@ -26,10 +26,9 @@ from qbwc_common import (
     load_qbd_xml_schemas,
     normalize_rs_list,
     parse_rs_element,
-    resolve_base_url,
 )
 
-DEFAULT_BATCH_SIZE = 75
+DEFAULT_BATCH_SIZE = 100
 WRITE_DECODE_VALIDATION = "skip"
 
 
@@ -46,19 +45,6 @@ def _format_record_identifiers(identifiers: dict[str, Any]) -> str:
 class QbwcTransportMixin:
     """Shared QBWC client, config and transport error mapping."""
 
-    _qbwc_client: QBWCClient | None = None
-    _qbd_xml_schemas = None
-
-    @property
-    def base_url(self) -> str:
-        """Return the QBWC SOAP service base URL for logging."""
-        return resolve_base_url(self.config.get("is_sandbox", False))
-
-    @property
-    def endpoint(self) -> str:
-        """Return the QBWC enqueue endpoint name for logging."""
-        return "send_qbwc_request"
-
     @property
     def unified_schema(self) -> type[BaseModel] | None:
         """QuickBooks-shaped input is validated by the XSD, not a unified model."""
@@ -66,22 +52,13 @@ class QbwcTransportMixin:
 
     @property
     def qbd_xml_schemas(self):
-        """Load the bundled qbXML schema set once per sink."""
-        if self._qbd_xml_schemas is None:
-            self._qbd_xml_schemas = load_qbd_xml_schemas()
-        return self._qbd_xml_schemas
+        """Return the bundled qbXML schema set (cached in qbwc-common)."""
+        return load_qbd_xml_schemas()
 
     @property
     def qbwc_client(self) -> QBWCClient:
-        """Return a lazily authenticated QBWC client reused across batches."""
-        if self._qbwc_client is None:
-            self._qbwc_client = QBWCClient(self.config, self.qbd_xml_schemas, self.logger)
-            self._qbwc_client.create_session()
-        return self._qbwc_client
-
-    def validate_input(self, record: dict) -> dict:
-        """Pass through QuickBooks-shaped records validated later by the XSD."""
-        return record
+        """Return the target's shared authenticated QBWC client."""
+        return self._target.qbwc_client
 
     def map_qbwc_error(self, error: Exception) -> Exception:
         """Map qbwc-common transport errors onto SDK and Hotglue exceptions."""
@@ -154,9 +131,6 @@ class QbwcBatchSink(QbwcTransportMixin, HotglueBatchSink):
         external_id = payload.pop(external_id_key, None) or payload.pop(
             external_id_key.lower(), None
         )
-        for key in list(payload):
-            if key.startswith("_sdc_"):
-                payload.pop(key, None)
         return payload, external_id
 
     def _build_request_element(self, payload: dict, index: int) -> dict[str, Any]:
@@ -207,13 +181,17 @@ class QbwcBatchSink(QbwcTransportMixin, HotglueBatchSink):
 
     def update_state(self, state: dict, is_duplicate: bool = False, record: dict | None = None):
         """Log per-record outcomes; batch sinks do not get this from the SDK by default."""
-        if state.get("success") and not is_duplicate and not state.get("is_updated"):
+        if state.get("success") and not is_duplicate:
             parts = []
             if state.get("id"):
                 parts.append(f"id: {state['id']}")
             if state.get("externalId"):
                 parts.append(f"externalId: {state['externalId']}")
-            self.logger.info("%s processed %s", self.name, ", ".join(parts) or "record")
+            detail = ", ".join(parts) or "record"
+            if state.get("is_updated"):
+                self.logger.info("%s updated %s", self.name, detail)
+            else:
+                self.logger.info("%s created %s", self.name, detail)
         super().update_state(state, is_duplicate=is_duplicate, record=record)
 
     def process_batch_record(self, record: dict, index: int) -> dict:
@@ -320,19 +298,15 @@ class QbwcBatchSink(QbwcTransportMixin, HotglueBatchSink):
 
     def make_batch_request(self, records: list[dict]) -> dict:
         """Send one batched QBXML message and pair each *Rs with its staged record."""
-        items: list[dict[str, Any]] = []
         valid_records = [record for record in records if "preprocess_error" not in record]
-
-        for staged in records:
-            if "preprocess_error" in staged:
-                items.append(
-                    {
-                        "record": staged,
-                        "preprocess_error": staged["preprocess_error"],
-                    }
-                )
+        responses_by_id: dict[str, dict[str, Any] | None] = {}
 
         if valid_records:
+            self.logger.info(
+                "%s batch write: %d record(s) (add only)",
+                self.name,
+                len(valid_records),
+            )
             request_elements = [record["request_element"] for record in valid_records]
             qbxml_msgs_rs = self.send_qbxml_batch(request_elements)
             responses = normalize_rs_list(qbxml_msgs_rs, self.response_element_name)
@@ -341,7 +315,17 @@ class QbwcBatchSink(QbwcTransportMixin, HotglueBatchSink):
                 for response in responses
                 for parsed in [parse_rs_element(response)]
             }
-            for staged in valid_records:
+
+        items: list[dict[str, Any]] = []
+        for staged in records:
+            if "preprocess_error" in staged:
+                items.append(
+                    {
+                        "record": staged,
+                        "preprocess_error": staged["preprocess_error"],
+                    }
+                )
+            else:
                 items.append(
                     {
                         "record": staged,

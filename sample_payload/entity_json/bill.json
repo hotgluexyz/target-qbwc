@@ -1,0 +1,41 @@
+[
+  {
+    "externalId": "entity-bill-001",
+    "VendorRef": {
+      "FullName": "HG-TGT-VEND-ENTITY-001"
+    },
+    "TxnDate": "2026-08-12",
+    "RefNumber": "HG-BILL-001",
+    "Memo": "Sample bill from entity JSON",
+    "ItemLineAdd": [
+      {
+        "externalId": "entity-bill-item-001",
+        "ItemRef": {
+          "FullName": "HG-TGT-ITEM-ENTITY-001"
+        },
+        "Desc": "Sample bill line 001",
+        "Quantity": "3",
+        "Cost": "12.50"
+      }
+    ]
+  },
+  {
+    "externalId": "entity-bill-002",
+    "VendorRef": {
+      "FullName": "HG-TGT-VEND-ENTITY-002"
+    },
+    "TxnDate": "2026-08-12",
+    "RefNumber": "HG-BILL-002",
+    "ItemLineAdd": [
+      {
+        "externalId": "entity-bill-item-002",
+        "ItemRef": {
+          "FullName": "HG-TGT-ITEM-ENTITY-002"
+        },
+        "Desc": "Sample bill line 002",
+        "Quantity": "2",
+        "Cost": "9.00"
+      }
+    ]
+  }
+]

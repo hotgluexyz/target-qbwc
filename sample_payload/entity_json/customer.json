@@ -1,0 +1,30 @@
+[
+  {
+    "externalId": "entity-cust-001",
+    "Name": "HG-TGT-ENTITY-001",
+    "CompanyName": "Hotglue Entity JSON 001",
+    "Phone": "555-4601",
+    "Email": "entity-001@example.com",
+    "BillAddress": {
+      "Addr1": "100 Example St",
+      "City": "Austin",
+      "State": "TX",
+      "PostalCode": "78701",
+      "Country": "USA"
+    }
+  },
+  {
+    "externalId": "entity-cust-002",
+    "Name": "HG-TGT-ENTITY-002",
+    "CompanyName": "Hotglue Entity JSON 002",
+    "Phone": "555-4602",
+    "Email": "entity-002@example.com",
+    "BillAddress": {
+      "Addr1": "200 Example Ave",
+      "City": "Dallas",
+      "State": "TX",
+      "PostalCode": "75201",
+      "Country": "USA"
+    }
+  }
+]

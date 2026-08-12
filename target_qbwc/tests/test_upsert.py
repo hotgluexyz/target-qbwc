@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import patch
 
 from hotglue_etl_exceptions import InvalidPayloadError
@@ -28,22 +29,6 @@ def _customer_ret(**fields) -> dict:
     return base
 
 
-def test_qbxml_entity_derives_element_names(customers_sink: CustomersSink):
-    """Derive QBXML request and response element names from qbxml_entity."""
-    assert customers_sink.qbxml_entity == "Customer"
-    assert customers_sink.request_element_name == "CustomerAddRq"
-    assert customers_sink.response_element_name == "CustomerAddRs"
-    assert customers_sink.entity_add_name == "CustomerAdd"
-    assert customers_sink.query_request_element_name == "CustomerQueryRq"
-    assert customers_sink.query_response_element_name == "CustomerQueryRs"
-    assert customers_sink.query_ret_element_name == "CustomerRet"
-    assert customers_sink.mod_request_element_name == "CustomerModRq"
-    assert customers_sink.mod_response_element_name == "CustomerModRs"
-    assert customers_sink.entity_mod_name == "CustomerMod"
-    assert customers_sink.id_field == "ListID"
-    assert customers_sink.lookup_fields == [("ListID", "ListID"), ("Name", "FullName")]
-
-
 def test_merge_for_mod_overlays_payload_and_keeps_identity(customers_sink: CustomersSink):
     """Overlay incoming fields onto the queried record and keep ListID and EditSequence."""
     merged = customers_sink._merge_for_mod(
@@ -58,6 +43,54 @@ def test_merge_for_mod_overlays_payload_and_keeps_identity(customers_sink: Custo
     assert merged["Name"] == "HG-TGT-E2E-001"
     assert "Balance" not in merged
     assert "FullName" not in merged
+
+
+def test_merge_for_mod_strips_ret_only_fields_from_existing_not_incoming(customers_sink: CustomersSink):
+    """Strip Ret-only keys from the query result but keep them when the user payload sends them."""
+    merged = customers_sink._merge_for_mod(
+        _customer_ret(),
+        {"Balance": "99.00", "CompanyName": "Updated Company"},
+    )
+
+    assert merged["Balance"] == "99.00"
+    assert merged["CompanyName"] == "Updated Company"
+    assert "FullName" not in merged
+    assert "TimeCreated" not in merged
+
+
+def test_build_write_request_mod_rejects_unknown_incoming_field(customers_sink: CustomersSink):
+    """Reject mod writes when incoming payload includes a field not defined on CustomerMod."""
+    staged = {
+        "request_id": "0",
+        "payload": {"Name": "HG-TGT-E2E-001", "Balance": "99.00"},
+    }
+    write_request = customers_sink._build_write_request(
+        staged,
+        {"matches": [_customer_ret()], "query_failed": False},
+    )
+
+    assert write_request["write_op"] == "mod"
+    assert write_request["preprocess_error"] is not None
+    message = str(write_request["preprocess_error"]).lower()
+    assert "balance" in message
+    assert "unknown field" in message
+
+
+def test_build_write_request_mod_rejects_ret_shaped_incoming_field(customers_sink: CustomersSink):
+    """Reject mod writes when incoming payload uses a Ret-only field name such as FullName."""
+    staged = {
+        "request_id": "0",
+        "payload": {"Name": "HG-TGT-E2E-001", "FullName": "HG-TGT-E2E-001"},
+    }
+    write_request = customers_sink._build_write_request(
+        staged,
+        {"matches": [_customer_ret()], "query_failed": False},
+    )
+
+    assert write_request["preprocess_error"] is not None
+    message = str(write_request["preprocess_error"]).lower()
+    assert "fullname" in message
+    assert "unknown field" in message
 
 
 def test_build_write_request_uses_mod_for_single_match(customers_sink: CustomersSink):
@@ -335,4 +368,49 @@ def test_make_batch_request_query_batch_failure_falls_back_to_add(customers_sink
     item = result["items"][0]
     assert item["record"]["write_op"] == "add"
     assert item["response"]["status_code"] == "0"
+
+
+def test_log_write_decision_mod(customers_sink: CustomersSink, caplog):
+    """Log mod decisions with lookup key, matched id and externalId when present."""
+    with caplog.at_level(logging.INFO, logger=customers_sink.logger.name):
+        customers_sink._log_write_decision(
+            {
+                "external_id": "cust-update",
+                "payload": {"Name": "HG-TGT-E2E-001", "CompanyName": "Updated Company"},
+            },
+            "mod",
+            "80002754-1786031476",
+        )
+
+    assert caplog.records[-1].message == (
+        "customer lookup matched FullName=HG-TGT-E2E-001, id: 80002754-1786031476, "
+        "externalId: cust-update, op: mod"
+    )
+
+
+def test_log_write_decision_add_no_match(customers_sink: CustomersSink, caplog):
+    """Log add decisions with lookup key when query criteria were present but unmatched."""
+    with caplog.at_level(logging.INFO, logger=customers_sink.logger.name):
+        customers_sink._log_write_decision(
+            {"payload": {"Name": "HG-NEW-001"}},
+            "add",
+        )
+
+    assert caplog.records[-1].message == "customer lookup no match FullName=HG-NEW-001, op: add"
+
+
+def test_log_write_decision_add_no_lookup_field(customers_sink: CustomersSink, caplog):
+    """Log add decisions when the payload has no lookup fields."""
+    with caplog.at_level(logging.INFO, logger=customers_sink.logger.name):
+        customers_sink._log_write_decision(
+            {
+                "external_id": "cust-add",
+                "payload": {"CompanyName": "New Co"},
+            },
+            "add",
+        )
+
+    assert caplog.records[-1].message == (
+        "customer no lookup field, externalId: cust-add, op: add"
+    )
 
