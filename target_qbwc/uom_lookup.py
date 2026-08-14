@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from hotglue_etl_exceptions import InvalidPayloadError
+
 from qbwc_common import normalize_rs_list
 
 from target_qbwc.uom_quantities import iter_uom_lines, rescale_payload_uom_quantities
@@ -172,11 +174,33 @@ class UomBatchPreparer:
             return records
 
         item_refs = self._collect_item_refs(valid_records, stream)
-        self._fetch_missing_items(item_refs)
-        uom_set_ids = self._collect_uom_set_ids(valid_records, stream)
-        self._fetch_missing_uom_sets(uom_set_ids)
+        item_error = self._fetch_missing_items(item_refs)
+        if item_error is not None:
+            missing_refs = {
+                ref
+                for ref in item_refs
+                if not self._cache.has_item_ref(
+                    {"ListID": ref.list_id, "FullName": ref.full_name}
+                )
+            }
+            for staged in valid_records:
+                if self._record_uses_item_refs(staged, stream, missing_refs):
+                    staged["preprocess_error"] = item_error
+
+        still_valid = [record for record in valid_records if "preprocess_error" not in record]
+        uom_set_ids = self._collect_uom_set_ids(still_valid, stream)
+        uom_error = self._fetch_missing_uom_sets(uom_set_ids)
+        if uom_error is not None:
+            missing_sets = {
+                list_id for list_id in uom_set_ids if not self._cache.has_uom_set(list_id)
+            }
+            for staged in still_valid:
+                if self._record_uses_uom_sets(staged, stream, missing_sets):
+                    staged["preprocess_error"] = uom_error
 
         for staged in valid_records:
+            if "preprocess_error" in staged:
+                continue
             error = rescale_payload_uom_quantities(
                 staged["payload"],
                 stream,
@@ -218,13 +242,42 @@ class UomBatchPreparer:
                     uom_set_ids[list_id] = None
         return list(uom_set_ids)
 
-    def _fetch_missing_items(self, item_refs: list[ItemRefKey]) -> None:
+    def _record_uses_item_refs(
+        self,
+        staged: dict[str, Any],
+        stream: str,
+        item_refs: set[ItemRefKey],
+    ) -> bool:
+        """Return whether a staged record references any of the given ItemRefs."""
+        for line in iter_uom_lines(staged["payload"], stream):
+            key = item_ref_key(line.get("ItemRef") or {})
+            if key is not None and key in item_refs:
+                return True
+        return False
+
+    def _record_uses_uom_sets(
+        self,
+        staged: dict[str, Any],
+        stream: str,
+        uom_set_ids: set[str],
+    ) -> bool:
+        """Return whether a staged record's items reference any of the given UOM sets."""
+        for line in iter_uom_lines(staged["payload"], stream):
+            item = self._cache.lookup_item(line.get("ItemRef") or {})
+            if not item:
+                continue
+            list_id = (item.get("UnitOfMeasureSetRef") or {}).get("ListID")
+            if list_id in uom_set_ids:
+                return True
+        return False
+
+    def _fetch_missing_items(self, item_refs: list[ItemRefKey]) -> InvalidPayloadError | None:
         """Batch-query uncached items in one QBXML message."""
         missing = [ref for ref in item_refs if not self._cache.has_item_ref(
             {"ListID": ref.list_id, "FullName": ref.full_name}
         )]
         if not missing:
-            return
+            return None
 
         query_elements: list[dict[str, Any]] = []
         ref_by_request_id: dict[str, ItemRefKey] = {}
@@ -256,15 +309,14 @@ class UomBatchPreparer:
                 response.get("@requestID", ""): response for response in responses
             }
         except Exception as exc:
+            mapped = self._sink.map_qbwc_error(exc)
             self._sink.logger.warning(
                 "UOM item lookup batch failed for %s (%d item(s)): %s",
                 self._sink.name,
                 len(missing),
-                self._sink.map_qbwc_error(exc),
+                mapped,
             )
-            for ref in missing:
-                self._cache.mark_item_missing(ref)
-            return
+            return InvalidPayloadError(f"UOM item lookup failed: {mapped}")
 
         for request_id, ref in ref_by_request_id.items():
             matches = _interpret_query_rs(responses_by_id.get(request_id), "ItemRet")
@@ -272,12 +324,13 @@ class UomBatchPreparer:
                 self._cache.store_item(matches[0])
             else:
                 self._cache.mark_item_missing(ref)
+        return None
 
-    def _fetch_missing_uom_sets(self, uom_set_ids: list[str]) -> None:
+    def _fetch_missing_uom_sets(self, uom_set_ids: list[str]) -> InvalidPayloadError | None:
         """Batch-query uncached UnitOfMeasureSets in one QBXML message."""
         missing = [list_id for list_id in uom_set_ids if not self._cache.has_uom_set(list_id)]
         if not missing:
-            return
+            return None
 
         query_elements: list[dict[str, Any]] = []
         for list_id in missing:
@@ -302,15 +355,14 @@ class UomBatchPreparer:
                 response.get("@requestID", ""): response for response in responses
             }
         except Exception as exc:
+            mapped = self._sink.map_qbwc_error(exc)
             self._sink.logger.warning(
                 "UOM set lookup batch failed for %s (%d set(s)): %s",
                 self._sink.name,
                 len(missing),
-                self._sink.map_qbwc_error(exc),
+                mapped,
             )
-            for list_id in missing:
-                self._cache.mark_uom_set_missing(list_id)
-            return
+            return InvalidPayloadError(f"UOM set lookup failed: {mapped}")
 
         fetched_ids: set[str] = set()
         for response in responses_by_id.values():
@@ -323,3 +375,4 @@ class UomBatchPreparer:
         for list_id in missing:
             if list_id not in fetched_ids:
                 self._cache.mark_uom_set_missing(list_id)
+        return None

@@ -10,6 +10,8 @@ from qbwc_common import filter_dict_for_mod, get_mod_element_names, normalize_rs
 
 from target_qbwc.client import QbwcBatchSink
 
+LOOKUP_QUERY_FAILED_MESSAGE = "Lookup query failed; not writing to avoid a duplicate"
+
 
 def _extract_ret_entities(rs_element: dict[str, Any], ret_element_name: str) -> list[dict[str, Any]]:
     """Return all *Ret entities from a query *Rs element."""
@@ -53,7 +55,7 @@ class QbwcUpsertBatchSink(QbwcBatchSink):
     """Batch sink with query-before-write upsert support for add and mod operations."""
 
     lookup_fields: list[tuple[str, str]]
-    _batch_item_error_keys = ("ambiguous_error", "preprocess_error")
+    _batch_item_error_keys = ("ambiguous_error", "lookup_error", "preprocess_error")
 
     @property
     def query_request_element_name(self) -> str:
@@ -213,6 +215,12 @@ class QbwcUpsertBatchSink(QbwcBatchSink):
             query_outcome.get("matches", []),
             staged["payload"],
         )
+        if query_outcome.get("query_failed"):
+            error = query_outcome.get("lookup_error") or Exception(
+                LOOKUP_QUERY_FAILED_MESSAGE
+            )
+            return {"lookup_error": error}
+
         if len(matches) > 1:
             return {"ambiguous_error": self._build_ambiguous_match_error(staged["payload"])}
 
@@ -266,13 +274,17 @@ class QbwcUpsertBatchSink(QbwcBatchSink):
         except Exception as exc:
             mapped = self.map_qbwc_error(exc)
             self.logger.warning(
-                "Lookup query batch failed for %s, proceeding as add for %d record(s): %s",
+                "Lookup query batch failed for %s, skipping write for %d record(s): %s",
                 self.name,
                 len(query_indices),
                 mapped,
             )
             for index in query_indices:
-                outcomes[index] = {"matches": [], "query_failed": True}
+                outcomes[index] = {
+                    "matches": [],
+                    "query_failed": True,
+                    "lookup_error": mapped,
+                }
             return [outcome or {"matches": [], "query_failed": False} for outcome in outcomes]
 
         for query_element, index in zip(query_elements, query_indices):
@@ -281,7 +293,7 @@ class QbwcUpsertBatchSink(QbwcBatchSink):
             outcome = self._interpret_query_response(rs_element)
             if outcome["query_failed"]:
                 self.logger.warning(
-                    "Lookup query failed for %s record request_id=%s, proceeding as add",
+                    "Lookup query failed for %s record request_id=%s, skipping write",
                     self.name,
                     request_id,
                 )
@@ -345,6 +357,14 @@ class QbwcUpsertBatchSink(QbwcBatchSink):
                 items_by_request_id[staged["request_id"]] = {
                     "record": staged,
                     "ambiguous_error": ambiguous_error,
+                }
+                continue
+
+            lookup_error = write_request.get("lookup_error")
+            if lookup_error is not None:
+                items_by_request_id[staged["request_id"]] = {
+                    "record": staged,
+                    "lookup_error": lookup_error,
                 }
                 continue
 

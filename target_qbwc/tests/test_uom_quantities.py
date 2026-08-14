@@ -61,7 +61,7 @@ def test_fix_line_converts_non_base_unit():
     }
 
     assert fix_line_quantity_based_on_uom(line, "invoice", item=uom_item(), uom_set=uom_set()) is None
-    assert line["Quantity"] == "50.0"
+    assert line["Quantity"] == "50"
 
 
 def test_fix_line_noop_for_base_unit():
@@ -90,7 +90,7 @@ def test_fix_line_uses_sales_default_when_uom_omitted_on_invoice():
     )
 
     assert fix_line_quantity_based_on_uom(line, "invoice", item=uom_item(), uom_set=uom_set_fixture) is None
-    assert line["Quantity"] == "15.0"
+    assert line["Quantity"] == "15"
 
 
 def test_fix_line_uses_purchase_default_on_bill():
@@ -107,7 +107,7 @@ def test_fix_line_uses_purchase_default_on_bill():
     )
 
     assert fix_line_quantity_based_on_uom(line, "bill", item=uom_item(), uom_set=uom_set_fixture) is None
-    assert line["Quantity"] == "20.0"
+    assert line["Quantity"] == "20"
 
 
 def test_fix_line_invalid_uom_returns_payload_error():
@@ -124,6 +124,21 @@ def test_fix_line_invalid_uom_returns_payload_error():
     assert "UnitOfMeasure 'pallet' is not valid" in str(error)
     assert "each, case, pack" in str(error)
     assert line["Quantity"] == "5"
+
+
+def test_fix_line_non_numeric_quantity_returns_payload_error():
+    """Return InvalidPayloadError when Quantity cannot be parsed as a number."""
+    line = {
+        "Quantity": "not-a-number",
+        "ItemRef": {"FullName": "4080K"},
+        "UnitOfMeasure": "case",
+    }
+
+    error = fix_line_quantity_based_on_uom(line, "invoice", item=uom_item(), uom_set=uom_set())
+
+    assert isinstance(error, InvalidPayloadError)
+    assert "Quantity is not numeric" in str(error)
+    assert line["Quantity"] == "not-a-number"
 
 
 def test_rescale_payload_processes_all_invoice_lines():
@@ -153,8 +168,8 @@ def test_rescale_payload_processes_all_invoice_lines():
         )
         is None
     )
-    assert payload["InvoiceLineAdd"][0]["Quantity"] == "50.0"
-    assert payload["InvoiceLineAdd"][1]["Quantity"] == "10.0"
+    assert payload["InvoiceLineAdd"][0]["Quantity"] == "50"
+    assert payload["InvoiceLineAdd"][1]["Quantity"] == "10"
 
 
 def test_rescale_payload_processes_invoice_line_mod():
@@ -181,7 +196,7 @@ def test_rescale_payload_processes_invoice_line_mod():
         )
         is None
     )
-    assert payload["InvoiceLineMod"][0]["Quantity"] == "10.0"
+    assert payload["InvoiceLineMod"][0]["Quantity"] == "10"
 
 
 def test_rescale_payload_processes_credit_memo_line_mod():
@@ -208,7 +223,7 @@ def test_rescale_payload_processes_credit_memo_line_mod():
         )
         is None
     )
-    assert payload["CreditMemoLineMod"][0]["Quantity"] == "30.0"
+    assert payload["CreditMemoLineMod"][0]["Quantity"] == "30"
 
 
 def test_rescale_payload_strips_invoice_line_external_id():
@@ -263,7 +278,7 @@ def test_rescale_payload_preserves_bill_line_external_id():
         is None
     )
     assert payload["ItemLineAdd"][0]["externalId"] == "item-line-1"
-    assert payload["ItemLineAdd"][0]["Quantity"] == "20.0"
+    assert payload["ItemLineAdd"][0]["Quantity"] == "20"
 
 
 def test_rescale_payload_processes_item_line_mod_on_bill():
@@ -291,5 +306,5 @@ def test_rescale_payload_processes_item_line_mod_on_bill():
         )
         is None
     )
-    assert payload["ItemLineMod"][0]["Quantity"] == "10.0"
+    assert payload["ItemLineMod"][0]["Quantity"] == "10"
     assert payload["ItemLineMod"][0]["externalId"] == "item-mod-1"

@@ -6,7 +6,9 @@ import logging
 from unittest.mock import patch
 
 from hotglue_etl_exceptions import InvalidPayloadError
+from hotglue_singer_sdk.exceptions import FatalAPIError
 
+from target_qbwc.client_upsert import LOOKUP_QUERY_FAILED_MESSAGE
 from target_qbwc.sinks import CustomersSink
 
 
@@ -136,6 +138,22 @@ def test_build_write_request_uses_add_for_no_matches(customers_sink: CustomersSi
             "CustomerAdd": staged["payload"],
         },
     }
+
+
+def test_build_write_request_skips_write_when_lookup_failed(customers_sink: CustomersSink):
+    """Skip add/mod when the lookup query failed."""
+    staged = {
+        "request_id": "1",
+        "payload": {"Name": "HG-NEW-001", "CompanyName": "New Co"},
+    }
+    write_request = customers_sink._build_write_request(
+        staged,
+        {"matches": [], "query_failed": True},
+    )
+
+    assert "lookup_error" in write_request
+    assert "write_op" not in write_request
+    assert str(write_request["lookup_error"]) == LOOKUP_QUERY_FAILED_MESSAGE
 
 
 def test_build_write_request_returns_ambiguous_error(customers_sink: CustomersSink):
@@ -342,32 +360,66 @@ def test_make_batch_request_runs_lookup_then_mod(customers_sink: CustomersSink):
     assert item["response"]["status_code"] == "0"
 
 
-def test_make_batch_request_query_batch_failure_falls_back_to_add(customers_sink: CustomersSink):
-    """Treat lookup transport failures as zero matches and still write."""
+def test_make_batch_request_query_batch_failure_skips_write(customers_sink: CustomersSink):
+    """Skip the write when the lookup batch fails in transport."""
     staged = customers_sink.process_batch_record(
         {"externalId": "fallback-cust", "Name": "HG-FALLBACK-001", "CompanyName": "Fallback Co"},
         0,
     )
-    write_response = {
-        "CustomerAddRs": {
+
+    with patch.object(
+        customers_sink,
+        "send_qbxml_batch",
+        side_effect=RuntimeError("lookup transport failed"),
+    ) as send_batch:
+        result = customers_sink.make_batch_request([staged])
+
+    assert send_batch.call_count == 1
+    item = result["items"][0]
+    assert isinstance(item["lookup_error"], FatalAPIError)
+    assert "lookup transport failed" in str(item["lookup_error"])
+    assert "write_op" not in item["record"]
+
+    handled = customers_sink.handle_batch_response(result)
+    update = handled["state_updates"][0]
+    assert update["success"] is False
+    assert "hg_error_class" not in update
+    assert "lookup transport failed" in update["error"]
+    assert update["externalId"] == "fallback-cust"
+
+
+def test_make_batch_request_query_rs_failure_skips_write(customers_sink: CustomersSink):
+    """Skip the write when a lookup *Rs is not a not-found miss."""
+    staged = customers_sink.process_batch_record(
+        {"externalId": "query-fail-cust", "Name": "HG-QUERY-FAIL-001", "CompanyName": "Fail Co"},
+        0,
+    )
+    query_response = {
+        "CustomerQueryRs": {
             "@requestID": "0",
-            "@statusCode": "0",
-            "@statusMessage": "Status OK",
-            "CustomerRet": {"ListID": "80002798-1786041000"},
+            "@statusCode": "500",
+            "@statusSeverity": "Error",
+            "@statusMessage": "Query failed",
         }
     }
 
     with patch.object(
         customers_sink,
         "send_qbxml_batch",
-        side_effect=[RuntimeError("lookup transport failed"), write_response],
+        return_value=query_response,
     ) as send_batch:
         result = customers_sink.make_batch_request([staged])
 
-    assert send_batch.call_count == 2
+    assert send_batch.call_count == 1
     item = result["items"][0]
-    assert item["record"]["write_op"] == "add"
-    assert item["response"]["status_code"] == "0"
+    assert str(item["lookup_error"]) == LOOKUP_QUERY_FAILED_MESSAGE
+    assert "write_op" not in item["record"]
+
+    handled = customers_sink.handle_batch_response(result)
+    update = handled["state_updates"][0]
+    assert update["success"] is False
+    assert "hg_error_class" not in update
+    assert update["error"] == LOOKUP_QUERY_FAILED_MESSAGE
 
 
 def test_log_write_decision_mod(customers_sink: CustomersSink, caplog):

@@ -57,7 +57,7 @@ def test_make_batch_request_applies_uom_rescaling_before_write(invoices_sink):
     lookup_mock.assert_called_once()
     write_mock.assert_called_once()
     line = staged["payload"]["InvoiceLineAdd"][0]
-    assert line["Quantity"] == "40.0"
+    assert line["Quantity"] == "40"
 
 
 def test_make_batch_request_batches_unique_items_in_one_uom_lookup(invoices_sink):
@@ -286,17 +286,65 @@ def test_make_batch_request_bill_uom_preserves_line_external_ids(bills_sink):
         bills_sink.make_batch_request([staged])
 
     assert len(write_staged) == 1
-    assert write_staged[0]["bill_item_line_external_ids"] == ["item-line-1"]
-    assert write_staged[0]["payload"]["ItemLineAdd"][0]["Quantity"] == "20.0"
+    assert write_staged[0]["bill_item_line_mapping"].refs[0].external_id == "item-line-1"
+    assert write_staged[0]["payload"]["ItemLineAdd"][0]["Quantity"] == "20"
 
 
-def test_make_batch_request_uom_item_lookup_failure_marks_cache_miss(invoices_sink):
-    """Record item lookup transport failures as cache misses without retrying."""
+def test_make_batch_request_uom_item_lookup_failure_fails_record(invoices_sink):
+    """Fail records when UOM item lookup transport fails, without caching a miss."""
+
+    def _staged(request_id: str, external_id: str) -> dict:
+        return {
+            "request_id": request_id,
+            "external_id": external_id,
+            "payload": {
+                "RefNumber": f"INV-{external_id}",
+                "CustomerRef": {"FullName": "Customer A"},
+                "InvoiceLineAdd": [
+                    {
+                        "Quantity": "2",
+                        "ItemRef": {"FullName": "4080K"},
+                        "UnitOfMeasure": "case",
+                    }
+                ],
+            },
+        }
+
+    first_staged = _staged("0", "inv-uom-miss")
+    second_staged = _staged("1", "inv-uom-miss-2")
+
+    with patch.object(invoices_sink, "_execute_lookup_queries") as lookup_mock, patch.object(
+        invoices_sink,
+        "_execute_write_batch",
+        side_effect=_write_batch_results,
+    ) as write_mock, patch.object(
+        invoices_sink,
+        "_validate_request_element",
+        return_value=None,
+    ), patch.object(
+        invoices_sink,
+        "send_qbxml_batch",
+        side_effect=RuntimeError("transport down"),
+    ) as send_mock:
+        first = invoices_sink.make_batch_request([first_staged])
+        second = invoices_sink.make_batch_request([second_staged])
+
+    assert send_mock.call_count == 2
+    lookup_mock.assert_not_called()
+    write_mock.assert_not_called()
+    assert "preprocess_error" in first["items"][0]
+    assert "UOM item lookup failed" in str(first["items"][0]["preprocess_error"])
+    assert "preprocess_error" in second["items"][0]
+    assert first_staged["payload"]["InvoiceLineAdd"][0]["Quantity"] == "2"
+
+
+def test_make_batch_request_uom_set_lookup_failure_fails_record(invoices_sink):
+    """Fail records when UOM set lookup transport fails, without caching a miss."""
     staged = {
         "request_id": "0",
-        "external_id": "inv-uom-miss",
+        "external_id": "inv-uom-set-miss",
         "payload": {
-            "RefNumber": "INV-UOM-MISS",
+            "RefNumber": "INV-UOM-SET-MISS",
             "CustomerRef": {"FullName": "Customer A"},
             "InvoiceLineAdd": [
                 {
@@ -307,24 +355,30 @@ def test_make_batch_request_uom_item_lookup_failure_marks_cache_miss(invoices_si
             ],
         },
     }
+    item = uom_item()
 
-    with patch.object(invoices_sink, "_execute_lookup_queries", return_value=[{"matches": [], "query_failed": False}]), patch.object(
+    with patch.object(invoices_sink, "_execute_lookup_queries") as lookup_mock, patch.object(
         invoices_sink,
         "_execute_write_batch",
         side_effect=_write_batch_results,
-    ), patch.object(
+    ) as write_mock, patch.object(
         invoices_sink,
         "_validate_request_element",
         return_value=None,
     ), patch.object(
         invoices_sink,
         "send_qbxml_batch",
-        side_effect=RuntimeError("transport down"),
-    ) as send_mock:
-        invoices_sink.make_batch_request([staged])
-        invoices_sink.make_batch_request([dict(staged, request_id="1", external_id="inv-uom-miss-2")])
+        side_effect=[
+            {"ItemQueryRs": [{"@requestID": "uom-item-1", "@statusCode": "0", "ItemInventoryRet": item}]},
+            RuntimeError("transport down"),
+        ],
+    ):
+        result = invoices_sink.make_batch_request([staged])
 
-    assert send_mock.call_count == 1
+    lookup_mock.assert_not_called()
+    write_mock.assert_not_called()
+    assert "preprocess_error" in result["items"][0]
+    assert "UOM set lookup failed" in str(result["items"][0]["preprocess_error"])
     assert staged["payload"]["InvoiceLineAdd"][0]["Quantity"] == "2"
 
 

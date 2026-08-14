@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from decimal import Decimal, InvalidOperation
 from typing import Any, Callable, Iterator
 
 from hotglue_etl_exceptions import InvalidPayloadError
@@ -105,8 +106,12 @@ def fix_line_quantity_based_on_uom(
         )
 
     conversion_ratio = found_related_unit.get("ConversionRatio", 1)
-    old_quantity = float(line["Quantity"])
-    line["Quantity"] = str(old_quantity * float(conversion_ratio))
+    try:
+        quantity = Decimal(str(line["Quantity"])) * Decimal(str(conversion_ratio))
+    except (InvalidOperation, ValueError, TypeError):
+        item_ref_label = item_full_name or item_list_id
+        return InvalidPayloadError(f"Item '{item_ref_label}': Quantity is not numeric.")
+    line["Quantity"] = format(quantity, "f")
     return None
 
 

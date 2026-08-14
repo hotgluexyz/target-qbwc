@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from target_qbwc.bill_lines import preprocess_bill_add_payload
+from target_qbwc.bill_lines import (
+    BillLineMapping,
+    BillLineRef,
+    preprocess_bill_add_payload,
+)
 from target_qbwc.sinks import BillsSink
 from target_qbwc.tests.conftest import make_sink
 
@@ -99,7 +103,9 @@ def test_build_write_request_mod_attaches_line_external_ids(bills_sink: BillsSin
     )
 
     assert write_request["write_op"] == "mod"
-    assert write_request["bill_expense_line_external_ids"] == ["exp-upd-1"]
+    expense_mapping = write_request["bill_expense_line_mapping"]
+    assert [ref.external_id for ref in expense_mapping.refs] == ["exp-upd-1"]
+    assert expense_mapping.refs[0].txn_line_id == "1"
 
 
 def test_handle_batch_response_add_includes_custom_data(bills_sink: BillsSink):
@@ -108,14 +114,14 @@ def test_handle_batch_response_add_includes_custom_data(bills_sink: BillsSink):
         "VendorRef": {"FullName": "Vendor A"},
         "ExpenseLineAdd": [{"externalId": "exp-1", "Amount": "30.00"}],
     }
-    prepared, item_ids, expense_ids = preprocess_bill_add_payload(payload)
+    prepared, item_mapping, expense_mapping = preprocess_bill_add_payload(payload)
     staged = {
         "request_id": "0",
         "external_id": "bill-add",
         "payload": prepared,
         "write_op": "add",
-        "bill_item_line_external_ids": item_ids,
-        "bill_expense_line_external_ids": expense_ids,
+        "bill_item_line_mapping": item_mapping,
+        "bill_expense_line_mapping": expense_mapping,
     }
 
     result = bills_sink.handle_batch_response(
@@ -150,8 +156,14 @@ def test_handle_batch_response_mod_includes_custom_data(bills_sink: BillsSink):
         "external_id": "bill-mod",
         "payload": {"Memo": "Updated"},
         "write_op": "mod",
-        "bill_expense_line_external_ids": ["exp-upd-1", "exp-new-1"],
-        "bill_item_line_external_ids": [],
+        "bill_expense_line_mapping": BillLineMapping(
+            refs=(
+                BillLineRef("exp-upd-1", "10"),
+                BillLineRef("exp-new-1", "-1"),
+            ),
+            existing_txn_line_ids=frozenset({"10"}),
+        ),
+        "bill_item_line_mapping": BillLineMapping(refs=(), existing_txn_line_ids=frozenset()),
     }
 
     result = bills_sink.handle_batch_response(
@@ -248,3 +260,24 @@ def test_build_write_request_add_preprocesses_lines(bills_sink: BillsSink):
     add_payload = write_request["request_element"]["BillAddRq"]["BillAdd"]
     assert "TxnLineID" not in add_payload["ExpenseLineAdd"][0]
     assert write_request["write_op"] == "add"
+
+
+def test_build_write_request_add_when_vendor_does_not_match(bills_sink: BillsSink):
+    """Issue BillAdd when RefNumber matches a bill for a different vendor."""
+    staged = {
+        "request_id": "0",
+        "payload": {
+            "RefNumber": "BILL-REF-001",
+            "VendorRef": {"ListID": "V-OTHER", "FullName": "Other Vendor"},
+            "ExpenseLineAdd": [{"TxnLineID": "stale", "Amount": "30.00"}],
+        },
+    }
+
+    write_request = bills_sink._build_write_request(
+        staged,
+        {"matches": [_bill_ret()], "query_failed": False},
+    )
+
+    assert write_request["write_op"] == "add"
+    add_payload = write_request["request_element"]["BillAddRq"]["BillAdd"]
+    assert "TxnLineID" not in add_payload["ExpenseLineAdd"][0]
