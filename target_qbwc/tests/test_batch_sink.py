@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from hotglue_etl_exceptions import InvalidPayloadError
+from hotglue_singer_sdk.exceptions import FatalAPIError, RetriableAPIError
 from qbwc_common import (
     decode_response,
     load_qbd_xml_schemas,
@@ -201,3 +202,12 @@ def test_handle_batch_response_missing_request_id(customers_sink: CustomersSink)
     assert update["hg_error_class"] == InvalidPayloadError.__name__
     assert "No matching QuickBooks response" in update["error"]
     assert update["externalId"] == "ext-missing"
+
+
+def test_map_qbwc_error_is_idempotent(add_only_customer_sink: AddOnlyCustomerSink):
+    """Leave already-mapped SDK exceptions unchanged."""
+    timeout = RetriableAPIError("timed out")
+    fatal = FatalAPIError("boom")
+
+    assert add_only_customer_sink.map_qbwc_error(timeout) is timeout
+    assert add_only_customer_sink.map_qbwc_error(fatal) is fatal

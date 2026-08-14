@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+from hotglue_singer_sdk.exceptions import FatalAPIError
+
 from target_qbwc.sinks import InvoicesSink
 from target_qbwc.target import TargetQbwc
 from target_qbwc.tests.conftest import uom_item, uom_set
@@ -332,10 +334,15 @@ def test_make_batch_request_uom_item_lookup_failure_fails_record(invoices_sink):
     assert send_mock.call_count == 2
     lookup_mock.assert_not_called()
     write_mock.assert_not_called()
-    assert "preprocess_error" in first["items"][0]
-    assert "UOM item lookup failed" in str(first["items"][0]["preprocess_error"])
-    assert "preprocess_error" in second["items"][0]
+    first_error = first["items"][0]["preprocess_error"]
+    assert isinstance(first_error, FatalAPIError)
+    assert "transport down" in str(first_error)
+    assert isinstance(second["items"][0]["preprocess_error"], FatalAPIError)
     assert first_staged["payload"]["InvoiceLineAdd"][0]["Quantity"] == "2"
+
+    first_update = invoices_sink.handle_batch_response(first)["state_updates"][0]
+    assert first_update["success"] is False
+    assert "hg_error_class" not in first_update
 
 
 def test_make_batch_request_uom_set_lookup_failure_fails_record(invoices_sink):
@@ -377,9 +384,14 @@ def test_make_batch_request_uom_set_lookup_failure_fails_record(invoices_sink):
 
     lookup_mock.assert_not_called()
     write_mock.assert_not_called()
-    assert "preprocess_error" in result["items"][0]
-    assert "UOM set lookup failed" in str(result["items"][0]["preprocess_error"])
+    error = result["items"][0]["preprocess_error"]
+    assert isinstance(error, FatalAPIError)
+    assert "transport down" in str(error)
     assert staged["payload"]["InvoiceLineAdd"][0]["Quantity"] == "2"
+
+    update = invoices_sink.handle_batch_response(result)["state_updates"][0]
+    assert update["success"] is False
+    assert "hg_error_class" not in update
 
 
 def test_make_batch_request_uom_item_lookup_zero_matches_marks_cache_miss(invoices_sink):

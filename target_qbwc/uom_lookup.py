@@ -5,8 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from hotglue_etl_exceptions import InvalidPayloadError
-
 from qbwc_common import normalize_rs_list
 
 from target_qbwc.uom_quantities import iter_uom_lines, rescale_payload_uom_quantities
@@ -271,7 +269,7 @@ class UomBatchPreparer:
                 return True
         return False
 
-    def _fetch_missing_items(self, item_refs: list[ItemRefKey]) -> InvalidPayloadError | None:
+    def _fetch_missing_items(self, item_refs: list[ItemRefKey]) -> Exception | None:
         """Batch-query uncached items in one QBXML message."""
         missing = [ref for ref in item_refs if not self._cache.has_item_ref(
             {"ListID": ref.list_id, "FullName": ref.full_name}
@@ -316,7 +314,7 @@ class UomBatchPreparer:
                 len(missing),
                 mapped,
             )
-            return InvalidPayloadError(f"UOM item lookup failed: {mapped}")
+            return mapped
 
         for request_id, ref in ref_by_request_id.items():
             matches = _interpret_query_rs(responses_by_id.get(request_id), "ItemRet")
@@ -326,7 +324,7 @@ class UomBatchPreparer:
                 self._cache.mark_item_missing(ref)
         return None
 
-    def _fetch_missing_uom_sets(self, uom_set_ids: list[str]) -> InvalidPayloadError | None:
+    def _fetch_missing_uom_sets(self, uom_set_ids: list[str]) -> Exception | None:
         """Batch-query uncached UnitOfMeasureSets in one QBXML message."""
         missing = [list_id for list_id in uom_set_ids if not self._cache.has_uom_set(list_id)]
         if not missing:
@@ -362,7 +360,7 @@ class UomBatchPreparer:
                 len(missing),
                 mapped,
             )
-            return InvalidPayloadError(f"UOM set lookup failed: {mapped}")
+            return mapped
 
         fetched_ids: set[str] = set()
         for response in responses_by_id.values():

@@ -62,6 +62,11 @@ class QbwcTransportMixin:
 
     def map_qbwc_error(self, error: Exception) -> Exception:
         """Map qbwc-common transport errors onto SDK and Hotglue exceptions."""
+        if isinstance(
+            error,
+            (InvalidCredentialsError, InvalidPayloadError, RetriableAPIError, FatalAPIError),
+        ):
+            return error
         if isinstance(error, (QBWCAuthenticationError, QBWCNotAuthenticatedError)):
             return InvalidCredentialsError(str(error))
         if isinstance(
