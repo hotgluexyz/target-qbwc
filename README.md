@@ -2,7 +2,7 @@
 
 `target-qbwc` is a Singer target for QuickBooks Desktop, built with the [Hotglue Singer SDK](https://github.com/hotgluexyz/HotglueSingerSDK).
 
-It writes QuickBooks-shaped records to QuickBooks Desktop through the QuickBooks Web Connector and `qbwc-soap-service`. Payloads use QuickBooks qbXML field names (PascalCase), not a unified accounting schema. Stream names and file layout follow the same conventions as the legacy on-prem QuickBooks Desktop write connector.
+It writes QuickBooks-shaped records to QuickBooks Desktop through the QuickBooks Web Connector and `qbwc-soap-service`. 
 
 ## Prerequisites
 
@@ -10,7 +10,6 @@ Writing through QBWC is asynchronous. The target enqueues QBXML to the SOAP serv
 
 You need all of the following available for a write job to complete:
 
-- QuickBooks Desktop open with the target company file
 - QuickBooks Web Connector running and configured for your QBWC application
 - A valid `token` for the `qbwc-soap-service` deployment you are targeting
 
@@ -25,10 +24,8 @@ git clone https://github.com/hotgluexyz/target-qbwc.git
 cd target-qbwc
 python -m venv .venv
 source .venv/bin/activate
-pip install -e ".[dev]"
+pip install -e .
 ```
-
-This target depends on [`qbwc-common`](https://github.com/hotgluexyz/qbwc-common).
 
 ## Configuration
 
@@ -52,10 +49,6 @@ Example `config.json`:
 }
 ```
 
-## Authentication
-
-The `token` is a base64-encoded JSON blob. It carries the environment, tenant, and API credentials the QBWC SOAP service needs to route requests to the correct QuickBooks Web Connector session. Pass it in config.
-
 ## Usage
 
 Pipe tap output on stdin:
@@ -77,19 +70,14 @@ Run from entity JSON only (set `input_path` in config; no stdin required at an i
 target-qbwc --config config.json
 ```
 
-In scripts or CI where stdin is not a TTY, pipe an empty stream when using `input_path` alone:
-
-```bash
-target-qbwc --config config.json < /dev/null
-```
-
 ## Input formats and processing order
 
-The target accepts Singer stdin, entity JSON on disk, or both at once. There is no `input_format` setting; detection is implicit.
+The target accepts Singer stdin, entity JSON on disk, or both at once.
 
-1. **Singer** — pipe a `.singer` file on stdin. Each `RECORD.stream` must match a sink `name` (singular snake_case, for example `customer`, `invoice`).
-2. **Entity JSON** — set `input_path` to a directory of `customer.json`, `invoice.json`, and similar files. Each file is a JSON array of QuickBooks-shaped records. A dated suffix is allowed (`invoice-20260729.json` maps to stream `invoice`).
+1. **Singer** — pipe a `.singer` file on stdin or pass with the `--input` option. Each `RECORD.stream` must match a sink `name` (singular snake_case, for example `customer`, `invoice`).
+2. **Entity JSON** — set `input_path` in config to a directory of `customer.json`, `invoice.json`, and similar files. Each file is a JSON array of QuickBooks-shaped records. A dated suffix is allowed (e.g. `invoice-20260729.json` maps to stream `invoice`).
 
+Sample  `customer.json`:
    ```json
    [
      {
@@ -107,7 +95,7 @@ The target accepts Singer stdin, entity JSON on disk, or both at once. There is 
    ]
    ```
 
-3. **Both** — when stdin has Singer lines and `input_path` has entity JSON, records are merged per stream. **JSON first, then Singer.** This matters when the same stream appears in both sources.
+3. **Both** — when stdin has Singer lines and `input_path` has entity JSON, records are merged per stream. **JSON first, then Singer.**
 4. **Stream order** — streams always run in this order, one stream at a time (each sink is drained before the next starts):
 
    `customer` → `vendor` → `item_inventory` → `item_noninventory` → `item_sales_tax` → `sales_order` → `invoice` → `credit_memo` → `bill` → `sales_receipt` → `vendor_credit` → `journal_entry`
@@ -124,7 +112,30 @@ Singer stream names are singular snake_case (for example `customer`, `invoice`, 
 
 ## Upsert behaviour
 
-Send Add-shaped payloads. Before each write, the target queries QuickBooks using the stream's lookup keys (see the table below). When a match is found, it issues a Mod with `ListID` or `TxnID` and `EditSequence` from the queried record. When no match is found, it issues an Add. You do not need to supply `EditSequence` or internal ids on update.
+Send Add-shaped payloads. Before each write, the target queries QuickBooks using the stream's lookup keys (see the table below). When a match is found, it issues a Mod with `ListID` or `TxnID` and `EditSequence` from the queried record. When no match is found, it issues an Add.
+
+## Batching and per-record errors
+
+The Singer SDK groups input records into batches of up to `batch_size` config option (default **100**). Each batch is processed on its own. A failure on one record does not roll back siblings in the same batch or stop later batches.
+
+Every QuickBooks round trip is one QBXML message with sibling requests and `onError="continueOnError"`. Each request gets a `requestID` that QuickBooks echoes on the matching `*Rs`, so the target can map each response back to the right input record.
+
+For upsert streams, one SDK batch can send several QBXML messages in order:
+
+1. **UOM prefetch** (`invoice`, `bill`, `credit_memo` only): batched `ItemQueryRq` and `UnitOfMeasureSetQueryRq` for uncached items and UOM sets, deduped within the batch.
+2. **Lookup**: batched `*QueryRq` per record to decide add vs mod.
+3. **Write**: batched `*AddRq` and/or `*ModRq` for records that passed lookup and validation.
+
+Streams without upsert still send batched writes; they skip the lookup step.
+
+Failures are isolated per record at each stage:
+
+- **Validation before send** (XSD): the record is marked failed locally and is not sent.
+- **Lookup problems** (transport error, query rejection, or multiple matches): that record is skipped for write; others in the batch continue.
+- **QuickBooks rejection** on add/mod (non-zero `statusCode`): only that record fails; siblings in the same write batch still commit.
+- **UOM prefetch errors**: only records that depend on the missing or invalid item or unit fail; other records in the batch still write.
+
+Each outcome is written to `bookmarks.<stream>` and rolled up in `summary.<stream>` (see [Output and state](#output-and-state)).
 
 ## Supported Streams
 
@@ -164,7 +175,7 @@ The bookmark then includes `customData` with `itemLines` and/or `expenseLines`, 
 
 Per-record outcomes are written to the final Singer `STATE` message under `bookmarks.<stream>` (one entry per input record) and rolled up in `summary.<stream>` (`success`, `fail`, `existing`, `updated`).
 
-Example excerpt after a mixed batch:
+Example excerpt after a mixed successful and failed batch:
 
 ```json
 {
@@ -199,10 +210,6 @@ Example excerpt after a mixed batch:
 ```
 
 Successful updates set `is_updated` on the bookmark. Failures include `error` and `hg_error_class` (`InvalidPayloadError` for validation and QuickBooks rejections, `InvalidCredentialsError` for token problems).
-
-## Batching and errors
-
-Each batch is a single QBXML message with `onError="continueOnError"`. Every record carries a `requestID` that QuickBooks echoes on the matching `*Rs` element. One bad record fails on its own while the rest of the batch still commits.
 
 ## Troubleshooting
 
@@ -256,12 +263,6 @@ Committed fixtures under `sample_payload/`:
 | `entity_json/invoice.json` | Invoice add with line items (two records) |
 | `entity_json/bill.json` | Bill add with item lines and line `externalId` |
 | `entity_json/journal_entry.json` | Journal entry add with debit/credit lines |
-
-Fixture notes:
-
-- Run list entities (`customer`, `vendor`, `item_inventory`) before txn samples (`invoice`, `bill`). Invoice and bill entity JSON reference `Name` / `FullName` values from the other fixtures in this folder (or matching records already in your company file).
-- Account refs in `entity_json/item_inventory.json` and `entity_json/journal_entry.json` match the QA sandbox company file. Adjust `IncomeAccountRef`, `COGSAccountRef`, `AssetAccountRef`, and journal `AccountRef` values for other companies.
-- Re-runs upsert by lookup keys (`Name`, `RefNumber`, ...). Payloads are Add-shaped. Sending `InvoiceLineAdd` / `ItemLineAdd` again on an existing txn can fail XSD validation on mod; use new `RefNumber` values or mod-shaped line fields for updates.
 
 Related repos:
 
