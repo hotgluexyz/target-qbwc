@@ -13,6 +13,7 @@ UOM_LINE_KEYS: dict[str, tuple[str, ...]] = {
     "invoice": ("InvoiceLineAdd", "InvoiceLineMod"),
     "bill": ("ItemLineAdd", "ItemLineMod"),
     "credit_memo": ("CreditMemoLineAdd", "CreditMemoLineMod"),
+    "purchase_order": ("PurchaseOrderLineAdd", "PurchaseOrderLineMod"),
 }
 
 # Bill line externalIds are collected during bill preprocess; only strip on txn streams.
