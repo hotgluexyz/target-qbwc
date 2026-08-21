@@ -1,0 +1,52 @@
+<?xml version="1.0" ?>
+<QBXML>
+  <QBXMLMsgsRs>
+    <CustomerAddRs requestID="ext-ok-1" statusCode="0" statusSeverity="Info" statusMessage="Status OK">
+      <CustomerRet>
+        <ListID>80002747-1785964187</ListID>
+        <TimeCreated>2026-08-05T16:43:27-04:00</TimeCreated>
+        <TimeModified>2026-08-05T16:43:27-04:00</TimeModified>
+        <EditSequence>1785964187</EditSequence>
+        <Name>HG-BATCH-OK-1785964184-1</Name>
+        <FullName>HG-BATCH-OK-1785964184-1</FullName>
+        <IsActive>true</IsActive>
+        <CompanyName>HG Batch OK 1785964184 1</CompanyName>
+        <Sublevel>0</Sublevel>
+        <Balance>0.00</Balance>
+        <TotalBalance>0.00</TotalBalance>
+      </CustomerRet>
+    </CustomerAddRs>
+    <CustomerAddRs requestID="ext-ok-2" statusCode="0" statusSeverity="Info" statusMessage="Status OK">
+      <CustomerRet>
+        <ListID>80002748-1785964187</ListID>
+        <Name>HG-BATCH-OK-1785964184-2</Name>
+        <FullName>HG-BATCH-OK-1785964184-2</FullName>
+        <CompanyName>HG Batch OK 1785964184 2</CompanyName>
+      </CustomerRet>
+    </CustomerAddRs>
+    <CustomerAddRs requestID="ext-ok-3" statusCode="0" statusSeverity="Info" statusMessage="Status OK">
+      <CustomerRet>
+        <ListID>80002749-1785964187</ListID>
+        <Name>HG-BATCH-OK-1785964184-3</Name>
+        <FullName>HG-BATCH-OK-1785964184-3</FullName>
+        <CompanyName>HG Batch OK 1785964184 3</CompanyName>
+      </CustomerRet>
+    </CustomerAddRs>
+    <CustomerAddRs requestID="ext-ok-4" statusCode="0" statusSeverity="Info" statusMessage="Status OK">
+      <CustomerRet>
+        <ListID>8000274A-1785964187</ListID>
+        <Name>HG-BATCH-OK-1785964184-4</Name>
+        <FullName>HG-BATCH-OK-1785964184-4</FullName>
+        <CompanyName>HG Batch OK 1785964184 4</CompanyName>
+      </CustomerRet>
+    </CustomerAddRs>
+    <CustomerAddRs requestID="ext-ok-5" statusCode="0" statusSeverity="Info" statusMessage="Status OK">
+      <CustomerRet>
+        <ListID>8000274B-1785964187</ListID>
+        <Name>HG-BATCH-OK-1785964184-5</Name>
+        <FullName>HG-BATCH-OK-1785964184-5</FullName>
+        <CompanyName>HG Batch OK 1785964184 5</CompanyName>
+      </CustomerRet>
+    </CustomerAddRs>
+  </QBXMLMsgsRs>
+</QBXML>

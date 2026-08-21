@@ -1,0 +1,38 @@
+<?xml version="1.0" ?>
+<QBXML>
+  <QBXMLMsgsRs>
+    <CustomerAddRs requestID="ext-mix-1" statusCode="0" statusSeverity="Info" statusMessage="Status OK">
+      <CustomerRet>
+        <ListID>8000274C-1785964190</ListID>
+        <TimeCreated>2026-08-05T16:43:30-04:00</TimeCreated>
+        <TimeModified>2026-08-05T16:43:30-04:00</TimeModified>
+        <EditSequence>1785964190</EditSequence>
+        <Name>HG-BATCH-MIX-1785964184-1</Name>
+        <FullName>HG-BATCH-MIX-1785964184-1</FullName>
+        <IsActive>true</IsActive>
+        <CompanyName>Valid first</CompanyName>
+        <Sublevel>0</Sublevel>
+        <Balance>0.00</Balance>
+        <TotalBalance>0.00</TotalBalance>
+      </CustomerRet>
+    </CustomerAddRs>
+    <CustomerAddRs requestID="ext-mix-2" statusCode="3100" statusSeverity="Error" statusMessage="The name &quot;HG-BATCH-MIX-1785964184-1&quot; of the list element is already in use."/>
+    <CustomerAddRs requestID="ext-mix-3" statusCode="3250" statusSeverity="Error" statusMessage="This feature is not enabled or not available in this version of QuickBooks."/>
+    <CustomerAddRs requestID="ext-mix-4" statusCode="3130" statusSeverity="Error" statusMessage="There is an invalid reference to a parent &quot;NONEXISTENT-PARENT-CUSTOMER&quot; in the Customers list.  QuickBooks error message: Invalid argument.  The specified record does not exist in the list."/>
+    <CustomerAddRs requestID="ext-mix-5" statusCode="0" statusSeverity="Info" statusMessage="Status OK">
+      <CustomerRet>
+        <ListID>8000274D-1785964190</ListID>
+        <TimeCreated>2026-08-05T16:43:30-04:00</TimeCreated>
+        <TimeModified>2026-08-05T16:43:30-04:00</TimeModified>
+        <EditSequence>1785964190</EditSequence>
+        <Name>HG-BATCH-MIX-1785964184-5</Name>
+        <FullName>HG-BATCH-MIX-1785964184-5</FullName>
+        <IsActive>true</IsActive>
+        <CompanyName>Valid last</CompanyName>
+        <Sublevel>0</Sublevel>
+        <Balance>0.00</Balance>
+        <TotalBalance>0.00</TotalBalance>
+      </CustomerRet>
+    </CustomerAddRs>
+  </QBXMLMsgsRs>
+</QBXML>

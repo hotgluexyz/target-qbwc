@@ -1,0 +1,44 @@
+[
+  {
+    "externalId": "entity-je-001",
+    "TxnDate": "2026-08-12",
+    "RefNumber": "JE-ENT-003",
+    "JournalDebitLine": [
+      {
+        "AccountRef": {
+          "FullName": "BankAcct"
+        },
+        "Amount": "100.00"
+      }
+    ],
+    "JournalCreditLine": [
+      {
+        "AccountRef": {
+          "FullName": "Opening Balance Equity"
+        },
+        "Amount": "100.00"
+      }
+    ]
+  },
+  {
+    "externalId": "entity-je-002",
+    "TxnDate": "2026-08-12",
+    "RefNumber": "JE-ENT-004",
+    "JournalDebitLine": [
+      {
+        "AccountRef": {
+          "FullName": "BankAcct"
+        },
+        "Amount": "50.00"
+      }
+    ],
+    "JournalCreditLine": [
+      {
+        "AccountRef": {
+          "FullName": "Opening Balance Equity"
+        },
+        "Amount": "50.00"
+      }
+    ]
+  }
+]
