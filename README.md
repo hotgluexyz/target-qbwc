@@ -122,7 +122,7 @@ Every QuickBooks round trip is one QBXML message with sibling requests and `onEr
 
 For upsert streams, one SDK batch can send several QBXML messages in order:
 
-1. **UOM prefetch** (`invoice`, `bill`, `credit_memo` only): batched `ItemQueryRq` and `UnitOfMeasureSetQueryRq` for uncached items and UOM sets, deduped within the batch.
+1. **UOM prefetch** (`invoice`, `bill`, `credit_memo`, `purchase_order`): batched `ItemQueryRq` and `UnitOfMeasureSetQueryRq` for uncached items and UOM sets, deduped within the batch.
 2. **Lookup**: batched `*QueryRq` per record to decide add vs mod.
 3. **Write**: batched `*AddRq` and/or `*ModRq` for records that passed lookup and validation.
 
@@ -146,12 +146,12 @@ Each outcome is written to `bookmarks.<stream>` and rolled up in `summary.<strea
 | `item_inventory` | `ItemInventoryAddRq` | `ItemInventoryModRq` | `ListID`, then `Name` | `ListID` |
 | `item_noninventory` | `ItemNonInventoryAddRq` | `ItemNonInventoryModRq` | `ListID`, then `Name` | `ListID` |
 | `item_sales_tax` | `ItemSalesTaxAddRq` | `ItemSalesTaxModRq` | `ListID`, then `Name` | `ListID` |
-| `purchase_order` | `PurchaseOrderAddRq` | `PurchaseOrderModRq` | `TxnID`, then `RefNumber` (scoped by `VendorRef`) | `TxnID` |
+| `purchase_order` | `PurchaseOrderAddRq` | `PurchaseOrderModRq` | `TxnID`, then `RefNumber` (RefNumber scoped by `VendorRef`) | `TxnID` |
 | `sales_order` | `SalesOrderAddRq` | `SalesOrderModRq` | `TxnID`, then `RefNumber` | `TxnID` |
 | `invoice` | `InvoiceAddRq` | `InvoiceModRq` | `TxnID`, then `RefNumber` | `TxnID` |
 | `sales_receipt` | `SalesReceiptAddRq` | `SalesReceiptModRq` | `TxnID`, then `RefNumber` | `TxnID` |
 | `credit_memo` | `CreditMemoAddRq` | `CreditMemoModRq` | `TxnID`, then `RefNumber` | `TxnID` |
-| `bill` | `BillAddRq` | `BillModRq` | `TxnID`, then `RefNumber` (scoped by `VendorRef`) | `TxnID` |
+| `bill` | `BillAddRq` | `BillModRq` | `TxnID`, then `RefNumber` (RefNumber scoped by `VendorRef`) | `TxnID` |
 | `vendor_credit` | `VendorCreditAddRq` | `VendorCreditModRq` | `TxnID`, then `RefNumber` | `TxnID` |
 | `journal_entry` | `JournalEntryAddRq` | `JournalEntryModRq` | `TxnID`, then `RefNumber` | `TxnID` |
 

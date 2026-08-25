@@ -12,7 +12,7 @@ from target_qbwc.bill_lines import (
     payload_has_bill_lines,
     preprocess_bill_add_payload,
 )
-from target_qbwc.client_upsert import QbwcTxnUpsertBatchSink
+from target_qbwc.client_upsert import QbwcTxnUpsertBatchSink, filter_matches_by_vendor_ref
 from target_qbwc.uom_sink import QbwcUomTxnMixin
 
 
@@ -37,22 +37,7 @@ class QbwcBillUpsertBatchSink(QbwcUomTxnMixin, QbwcTxnUpsertBatchSink):
         payload: dict[str, Any],
     ) -> list[dict[str, Any]]:
         """Post-filter bill query matches by VendorRef when RefNumber lookup is used."""
-        vendor_ref = payload.get("VendorRef") or {}
-        vendor_list_id = vendor_ref.get("ListID")
-        vendor_full_name = vendor_ref.get("FullName")
-        if not vendor_list_id and not vendor_full_name:
-            return matches
-
-        filtered: list[dict[str, Any]] = []
-        for entity in matches:
-            entity_vendor = entity.get("VendorRef") or {}
-            if vendor_list_id and entity_vendor.get("ListID") == vendor_list_id:
-                filtered.append(entity)
-            elif vendor_full_name and (
-                entity_vendor.get("FullName") or ""
-            ).lower() == vendor_full_name.lower():
-                filtered.append(entity)
-        return filtered
+        return filter_matches_by_vendor_ref(matches, payload, self.lookup_fields)
 
     def _merge_for_mod(self, existing: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
         """Use bill line reconciliation when the payload includes line arrays."""

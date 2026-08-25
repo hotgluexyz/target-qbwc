@@ -6,7 +6,7 @@ from typing import Any
 
 from target_qbwc.bill_sink import QbwcBillUpsertBatchSink
 from target_qbwc.uom_sink import QbwcUomTxnMixin
-from target_qbwc.client_upsert import QbwcListUpsertBatchSink, QbwcTxnUpsertBatchSink
+from target_qbwc.client_upsert import QbwcListUpsertBatchSink, QbwcTxnUpsertBatchSink, filter_matches_by_vendor_ref
 
 
 class CustomersSink(QbwcListUpsertBatchSink):
@@ -84,22 +84,7 @@ class PurchaseOrdersSink(QbwcUomTxnMixin, QbwcTxnUpsertBatchSink):
         payload: dict[str, Any],
     ) -> list[dict[str, Any]]:
         """Post-filter purchase order query matches by VendorRef when RefNumber lookup is used."""
-        vendor_ref = payload.get("VendorRef") or {}
-        vendor_list_id = vendor_ref.get("ListID")
-        vendor_full_name = vendor_ref.get("FullName")
-        if not vendor_list_id and not vendor_full_name:
-            return matches
-
-        filtered: list[dict[str, Any]] = []
-        for entity in matches:
-            entity_vendor = entity.get("VendorRef") or {}
-            if vendor_list_id and entity_vendor.get("ListID") == vendor_list_id:
-                filtered.append(entity)
-            elif vendor_full_name and (
-                entity_vendor.get("FullName") or ""
-            ).lower() == vendor_full_name.lower():
-                filtered.append(entity)
-        return filtered
+        return filter_matches_by_vendor_ref(matches, payload, self.lookup_fields)
 
 
 class BillsSink(QbwcBillUpsertBatchSink):

@@ -32,7 +32,7 @@ def _bill_ret(**fields) -> dict:
 
 
 def test_bill_vendor_ref_filter(target_config):
-    """Post-filter bill query matches by VendorRef."""
+    """Post-filter bill query matches by VendorRef for RefNumber lookups."""
     sink = make_sink(BillsSink, target_config)
     matches = [
         {

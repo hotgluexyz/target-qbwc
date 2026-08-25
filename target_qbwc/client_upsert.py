@@ -51,6 +51,34 @@ def _format_external_id_log(external_id: str | None) -> str:
     return ""
 
 
+def filter_matches_by_vendor_ref(
+    matches: list[dict[str, Any]],
+    payload: dict[str, Any],
+    lookup_fields: list[tuple[str, str]],
+) -> list[dict[str, Any]]:
+    """Post-filter vendor transaction matches by VendorRef for RefNumber lookups only."""
+    lookup_match = _first_lookup_match(payload, lookup_fields)
+    if lookup_match is not None and lookup_match[0] == "TxnID":
+        return matches
+
+    vendor_ref = payload.get("VendorRef") or {}
+    vendor_list_id = vendor_ref.get("ListID")
+    vendor_full_name = vendor_ref.get("FullName")
+    if not vendor_list_id and not vendor_full_name:
+        return matches
+
+    filtered: list[dict[str, Any]] = []
+    for entity in matches:
+        entity_vendor = entity.get("VendorRef") or {}
+        if vendor_list_id and entity_vendor.get("ListID") == vendor_list_id:
+            filtered.append(entity)
+        elif vendor_full_name and (
+            entity_vendor.get("FullName") or ""
+        ).lower() == vendor_full_name.lower():
+            filtered.append(entity)
+    return filtered
+
+
 class QbwcUpsertBatchSink(QbwcBatchSink):
     """Batch sink with query-before-write upsert support for add and mod operations."""
 
