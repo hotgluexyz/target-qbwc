@@ -1,0 +1,21 @@
+[
+  {
+    "externalId": "entity-po-001",
+    "VendorRef": {
+      "FullName": "HG-TGT-VEND-ENTITY-001"
+    },
+    "TxnDate": "2026-08-12",
+    "RefNumber": "HG-PO-001",
+    "Memo": "Sample purchase order from entity JSON",
+    "PurchaseOrderLineAdd": [
+      {
+        "ItemRef": {
+          "FullName": "HG-TGT-ITEM-ENTITY-001"
+        },
+        "Desc": "Sample PO line 001",
+        "Quantity": "5",
+        "Rate": "12.50"
+      }
+    ]
+  }
+]

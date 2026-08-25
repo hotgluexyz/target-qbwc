@@ -18,6 +18,7 @@ STREAM_ORDER: tuple[str, ...] = (
     "item_inventory",
     "item_noninventory",
     "item_sales_tax",
+    "purchase_order",
     "sales_order",
     "invoice",
     "credit_memo",

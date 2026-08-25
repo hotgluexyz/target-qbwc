@@ -1,8 +1,12 @@
 """QBWC target sink classes."""
 
+from __future__ import annotations
+
+from typing import Any
+
 from target_qbwc.bill_sink import QbwcBillUpsertBatchSink
 from target_qbwc.uom_sink import QbwcUomTxnMixin
-from target_qbwc.client_upsert import QbwcListUpsertBatchSink, QbwcTxnUpsertBatchSink
+from target_qbwc.client_upsert import QbwcListUpsertBatchSink, QbwcTxnUpsertBatchSink, filter_matches_by_vendor_ref
 
 
 class CustomersSink(QbwcListUpsertBatchSink):
@@ -66,6 +70,21 @@ class CreditMemosSink(QbwcUomTxnMixin, QbwcTxnUpsertBatchSink):
 
     name = "credit_memo"
     qbxml_entity = "CreditMemo"
+
+
+class PurchaseOrdersSink(QbwcUomTxnMixin, QbwcTxnUpsertBatchSink):
+    """Writes purchase order records to QuickBooks Desktop."""
+
+    name = "purchase_order"
+    qbxml_entity = "PurchaseOrder"
+
+    def _filter_query_matches(
+        self,
+        matches: list[dict[str, Any]],
+        payload: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """Post-filter purchase order query matches by VendorRef when RefNumber lookup is used."""
+        return filter_matches_by_vendor_ref(matches, payload, self.lookup_fields)
 
 
 class BillsSink(QbwcBillUpsertBatchSink):

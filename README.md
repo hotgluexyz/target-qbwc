@@ -98,7 +98,7 @@ Sample  `customer.json`:
 3. **Both** — when stdin has Singer lines and `input_path` has entity JSON, records are merged per stream. **JSON first, then Singer.**
 4. **Stream order** — streams always run in this order, one stream at a time (each sink is drained before the next starts):
 
-   `customer` → `vendor` → `item_inventory` → `item_noninventory` → `item_sales_tax` → `sales_order` → `invoice` → `credit_memo` → `bill` → `sales_receipt` → `vendor_credit` → `journal_entry`
+   `customer` → `vendor` → `item_inventory` → `item_noninventory` → `item_sales_tax` → `purchase_order` → `sales_order` → `invoice` → `credit_memo` → `bill` → `sales_receipt` → `vendor_credit` → `journal_entry`
 
    Input file or line order does not matter.
 
@@ -122,7 +122,7 @@ Every QuickBooks round trip is one QBXML message with sibling requests and `onEr
 
 For upsert streams, one SDK batch can send several QBXML messages in order:
 
-1. **UOM prefetch** (`invoice`, `bill`, `credit_memo` only): batched `ItemQueryRq` and `UnitOfMeasureSetQueryRq` for uncached items and UOM sets, deduped within the batch.
+1. **UOM prefetch** (`invoice`, `bill`, `credit_memo`, `purchase_order`): batched `ItemQueryRq` and `UnitOfMeasureSetQueryRq` for uncached items and UOM sets, deduped within the batch.
 2. **Lookup**: batched `*QueryRq` per record to decide add vs mod.
 3. **Write**: batched `*AddRq` and/or `*ModRq` for records that passed lookup and validation.
 
@@ -146,20 +146,21 @@ Each outcome is written to `bookmarks.<stream>` and rolled up in `summary.<strea
 | `item_inventory` | `ItemInventoryAddRq` | `ItemInventoryModRq` | `ListID`, then `Name` | `ListID` |
 | `item_noninventory` | `ItemNonInventoryAddRq` | `ItemNonInventoryModRq` | `ListID`, then `Name` | `ListID` |
 | `item_sales_tax` | `ItemSalesTaxAddRq` | `ItemSalesTaxModRq` | `ListID`, then `Name` | `ListID` |
+| `purchase_order` | `PurchaseOrderAddRq` | `PurchaseOrderModRq` | `TxnID`, then `RefNumber` (RefNumber scoped by `VendorRef`) | `TxnID` |
 | `sales_order` | `SalesOrderAddRq` | `SalesOrderModRq` | `TxnID`, then `RefNumber` | `TxnID` |
 | `invoice` | `InvoiceAddRq` | `InvoiceModRq` | `TxnID`, then `RefNumber` | `TxnID` |
 | `sales_receipt` | `SalesReceiptAddRq` | `SalesReceiptModRq` | `TxnID`, then `RefNumber` | `TxnID` |
 | `credit_memo` | `CreditMemoAddRq` | `CreditMemoModRq` | `TxnID`, then `RefNumber` | `TxnID` |
-| `bill` | `BillAddRq` | `BillModRq` | `TxnID`, then `RefNumber` (scoped by `VendorRef`) | `TxnID` |
+| `bill` | `BillAddRq` | `BillModRq` | `TxnID`, then `RefNumber` (RefNumber scoped by `VendorRef`) | `TxnID` |
 | `vendor_credit` | `VendorCreditAddRq` | `VendorCreditModRq` | `TxnID`, then `RefNumber` | `TxnID` |
 | `journal_entry` | `JournalEntryAddRq` | `JournalEntryModRq` | `TxnID`, then `RefNumber` | `TxnID` |
 
 ### Unit of measure quantity rescaling
 
-For `invoice`, `bill`, and `credit_memo`, the target automatically rescales line `Quantity` to QuickBooks **base units** before writing when the line has `Quantity` and `ItemRef` and the item is linked to a `UnitOfMeasureSet`.
+For `invoice`, `bill`, `credit_memo`, and `purchase_order`, the target automatically rescales line `Quantity` to QuickBooks **base units** before writing when the line has `Quantity` and `ItemRef` and the item is linked to a `UnitOfMeasureSet`.
 
 - Optional `UnitOfMeasure` on the line selects which unit the payload quantity is expressed in.
-- When `UnitOfMeasure` is omitted, the target uses the item's **Sales** default unit on `invoice` and `credit_memo`, and the **Purchase** default on `bill`.
+- When `UnitOfMeasure` is omitted, the target uses the item's **Sales** default unit on `invoice` and `credit_memo`, and the **Purchase** default on `bill` and `purchase_order`.
 - If the line unit matches the UOM set base unit, the quantity is left unchanged.
 - If the unit name is not valid for the item's UOM set, the record fails with `InvalidPayloadError` listing the valid units.
 
