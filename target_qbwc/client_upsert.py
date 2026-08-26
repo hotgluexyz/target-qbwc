@@ -35,15 +35,6 @@ def _first_lookup_match(
     return None
 
 
-def _format_lookup_values(payload: dict[str, Any], lookup_fields: list[tuple[str, str]]) -> dict[str, Any]:
-    """Build a human-readable lookup dict from the first matching payload field."""
-    match = _first_lookup_match(payload, lookup_fields)
-    if match is None:
-        return {}
-    _, query_element, value = match
-    return {query_element: value}
-
-
 def _format_external_id_log(external_id: str | None) -> str:
     """Format externalId for per-record log lines when present."""
     if external_id:
@@ -115,6 +106,25 @@ class QbwcUpsertBatchSink(QbwcBatchSink):
         """Return the stream's *Mod entity element name."""
         return f"{self.qbxml_entity}Mod"
 
+    def _resolve_lookup_query_value(
+        self,
+        payload: dict[str, Any],
+        payload_key: str,
+        query_element: str,
+        value: Any,
+    ) -> Any:
+        """Return the query value for one lookup field, allowing stream-specific transforms."""
+        return value
+
+    def _format_lookup_values(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Build a human-readable lookup dict from the first matching payload field."""
+        match = _first_lookup_match(payload, self.lookup_fields)
+        if match is None:
+            return {}
+        payload_key, query_element, value = match
+        value = self._resolve_lookup_query_value(payload, payload_key, query_element, value)
+        return {query_element: value}
+
     def process_batch_record(self, record: dict, index: int) -> dict:
         """Strip metadata and stage the payload without add-only XSD validation."""
         payload, external_id = self.strip_hotglue_metadata(record)
@@ -130,7 +140,8 @@ class QbwcUpsertBatchSink(QbwcBatchSink):
         match = _first_lookup_match(payload, self.lookup_fields)
         if match is None:
             return None
-        _, query_element, value = match
+        payload_key, query_element, value = match
+        value = self._resolve_lookup_query_value(payload, payload_key, query_element, value)
         return {
             self.query_request_element_name: {
                 "@requestID": request_id,
@@ -185,7 +196,7 @@ class QbwcUpsertBatchSink(QbwcBatchSink):
 
     def _build_ambiguous_match_error(self, payload: dict[str, Any]) -> InvalidPayloadError:
         """Build the error for multiple lookup matches."""
-        lookup = _format_lookup_values(payload, self.lookup_fields)
+        lookup = self._format_lookup_values(payload)
         return InvalidPayloadError(
             "Unable to create or update record, as there are multiple existing records "
             f"in Quickbooks with the same identifiers {lookup}"
@@ -205,7 +216,8 @@ class QbwcUpsertBatchSink(QbwcBatchSink):
         if write_op == "mod":
             lookup_fragment = ""
             if lookup_match is not None:
-                _, query_element, value = lookup_match
+                payload_key, query_element, value = lookup_match
+                value = self._resolve_lookup_query_value(payload, payload_key, query_element, value)
                 lookup_fragment = f"lookup matched {query_element}={value}, "
             self.logger.info(
                 "%s %sid: %s, %sop: mod",
@@ -224,7 +236,8 @@ class QbwcUpsertBatchSink(QbwcBatchSink):
             )
             return
 
-        _, query_element, value = lookup_match
+        payload_key, query_element, value = lookup_match
+        value = self._resolve_lookup_query_value(payload, payload_key, query_element, value)
         self.logger.info(
             "%s lookup no match %s=%s, %sop: add",
             self.name,

@@ -466,3 +466,63 @@ def test_log_write_decision_add_no_lookup_field(customers_sink: CustomersSink, c
         "customer no lookup field, externalId: cust-add, op: add"
     )
 
+
+def test_build_lookup_query_element_stitches_parent_full_name(customers_sink: CustomersSink):
+    """Lookup sub-customers using ParentRef.FullName:Name as QBD FullName."""
+    query_element = customers_sink._build_lookup_query_element(
+        {
+            "Name": "SpaceX",
+            "ParentRef": {"FullName": "Elon Musk"},
+        },
+        "0",
+    )
+
+    assert query_element == {
+        "CustomerQueryRq": {
+            "@requestID": "0",
+            "FullName": "Elon Musk:SpaceX",
+        }
+    }
+
+
+def test_build_lookup_query_element_stitches_parent_list_id(customers_sink: CustomersSink):
+    """Resolve ParentRef.ListID to parent FullName before lookup."""
+    with patch.object(
+        customers_sink,
+        "_query_customer_full_name_by_list_id",
+        return_value="Elon Musk",
+    ):
+        query_element = customers_sink._build_lookup_query_element(
+            {
+                "Name": "SpaceX",
+                "ParentRef": {"ListID": "80000009-1750961692"},
+            },
+            "1",
+        )
+
+    assert query_element == {
+        "CustomerQueryRq": {
+            "@requestID": "1",
+            "FullName": "Elon Musk:SpaceX",
+        }
+    }
+
+
+def test_build_lookup_query_element_uses_list_id_when_present(customers_sink: CustomersSink):
+    """Prefer direct ListID lookup when payload includes ListID."""
+    query_element = customers_sink._build_lookup_query_element(
+        {
+            "ListID": "80000009-1750961692",
+            "Name": "SpaceX",
+            "ParentRef": {"FullName": "Elon Musk"},
+        },
+        "2",
+    )
+
+    assert query_element == {
+        "CustomerQueryRq": {
+            "@requestID": "2",
+            "ListID": "80000009-1750961692",
+        }
+    }
+
