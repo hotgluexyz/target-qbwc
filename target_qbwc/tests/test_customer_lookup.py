@@ -24,9 +24,13 @@ class TestCustomerLookup(unittest.TestCase):
             "Name": "SpaceX",
             "ParentRef": {"ListID": "80000009-1750961692"},
         }
-        resolver = lambda list_id: "Elon Musk" if list_id == "80000009-1750961692" else None
         self.assertEqual(
-            customer_full_name_for_lookup(payload, parent_full_name_resolver=resolver),
+            customer_full_name_for_lookup(
+                payload,
+                parent_full_name_resolver=lambda list_id: (
+                    "Elon Musk" if list_id == "80000009-1750961692" else None
+                ),
+            ),
             "Elon Musk:SpaceX",
         )
 
@@ -38,9 +42,11 @@ class TestCustomerLookup(unittest.TestCase):
                 "ListID": "80000009-1750961692",
             },
         }
-        resolver = lambda list_id: "Wrong Parent"
         self.assertEqual(
-            customer_full_name_for_lookup(payload, parent_full_name_resolver=resolver),
+            customer_full_name_for_lookup(
+                payload,
+                parent_full_name_resolver=lambda list_id: "Wrong Parent",
+            ),
             "Elon Musk:SpaceX",
         )
 
