@@ -67,3 +67,9 @@ class TestCustomerLookup(unittest.TestCase):
             "ParentRef": {"ListID": "80000009-1750961692"},
         }
         self.assertEqual(customer_full_name_for_lookup(payload), "SpaceX")
+
+    def test_invalid_parent_ref_type_falls_back_to_name(self):
+        for parent_ref in ("azmat test", ["azmat test"], 123):
+            with self.subTest(parent_ref=parent_ref):
+                payload = {"Name": "SpaceX", "ParentRef": parent_ref}
+                self.assertEqual(customer_full_name_for_lookup(payload), "SpaceX")

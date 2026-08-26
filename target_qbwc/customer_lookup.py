@@ -23,7 +23,19 @@ def customer_full_name_for_lookup(
     if not name:
         return None
 
-    parent_ref = payload.get("ParentRef") or {}
+    parent_ref_raw = payload.get("ParentRef")
+    if parent_ref_raw is None:
+        parent_ref: dict[str, Any] = {}
+    elif isinstance(parent_ref_raw, dict):
+        parent_ref = parent_ref_raw
+    else:
+        logger.warning(
+            "Invalid ParentRef type %s for customer Name=%s. Falling back to Name for lookup.",
+            type(parent_ref_raw).__name__,
+            name,
+        )
+        return name
+
     parent_full_name = parent_ref.get("FullName")
     if parent_full_name:
         qualified_name = (
