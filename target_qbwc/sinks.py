@@ -7,7 +7,7 @@ from typing import Any
 from qbwc_common import normalize_rs_list
 
 from target_qbwc.bill_sink import QbwcBillUpsertBatchSink
-from target_qbwc.customer_lookup import customer_full_name_for_lookup
+from target_qbwc.customer_lookup import customer_full_name_for_lookup, parent_list_id_for_lookup
 from target_qbwc.uom_sink import QbwcUomTxnMixin
 from target_qbwc.client_upsert import QbwcListUpsertBatchSink, QbwcTxnUpsertBatchSink, filter_matches_by_vendor_ref
 
@@ -17,6 +17,58 @@ class CustomersSink(QbwcListUpsertBatchSink):
 
     name = "customer"
     qbxml_entity = "Customer"
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._parent_full_name_cache: dict[str, str | None] = {}
+
+    def _execute_lookup_queries(self, staged_records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Prefetch parent FullNames, then run the batched customer lookup queries."""
+        self._prefetch_parent_full_names(staged_records)
+        return super()._execute_lookup_queries(staged_records)
+
+    def _prefetch_parent_full_names(self, staged_records: list[dict[str, Any]]) -> None:
+        """Batch-query unique parent ListIDs needed for sub-customer FullName lookup."""
+        self._parent_full_name_cache = {}
+        parent_list_ids: list[str] = []
+        seen: set[str] = set()
+
+        for staged in staged_records:
+            parent_list_id = parent_list_id_for_lookup(staged["payload"])
+            if parent_list_id and parent_list_id not in seen:
+                seen.add(parent_list_id)
+                parent_list_ids.append(parent_list_id)
+
+        if not parent_list_ids:
+            return
+
+        query_elements = [
+            {
+                "CustomerQueryRq": {
+                    "@requestID": f"parent-{parent_list_id}",
+                    "ListID": parent_list_id,
+                }
+            }
+            for parent_list_id in parent_list_ids
+        ]
+
+        try:
+            qbxml_msgs_rs = self.send_qbxml_batch(query_elements)
+            responses = normalize_rs_list(qbxml_msgs_rs, "CustomerQueryRs")
+            responses_by_id = {response.get("@requestID", ""): response for response in responses}
+            for parent_list_id in parent_list_ids:
+                request_id = f"parent-{parent_list_id}"
+                outcome = self._interpret_query_response(responses_by_id.get(request_id))
+                if outcome.get("query_failed") or not outcome.get("matches"):
+                    self._parent_full_name_cache[parent_list_id] = None
+                else:
+                    self._parent_full_name_cache[parent_list_id] = outcome["matches"][0].get("FullName")
+        except Exception:
+            self.logger.exception(
+                "Failed to batch query customer parents for ParentRef.ListID lookup",
+            )
+            for parent_list_id in parent_list_ids:
+                self._parent_full_name_cache[parent_list_id] = None
 
     def _resolve_lookup_query_value(
         self,
@@ -34,28 +86,8 @@ class CustomersSink(QbwcListUpsertBatchSink):
         return value
 
     def _query_customer_full_name_by_list_id(self, parent_list_id: str) -> str | None:
-        """Look up a parent customer's FullName in QBD using ListID."""
-        request_id = f"parent-{parent_list_id}"
-        query_element = {
-            "CustomerQueryRq": {
-                "@requestID": request_id,
-                "ListID": parent_list_id,
-            }
-        }
-        try:
-            qbxml_msgs_rs = self.send_qbxml_batch([query_element])
-            responses = normalize_rs_list(qbxml_msgs_rs, "CustomerQueryRs")
-            responses_by_id = {response.get("@requestID", ""): response for response in responses}
-            outcome = self._interpret_query_response(responses_by_id.get(request_id))
-            if outcome.get("query_failed") or not outcome.get("matches"):
-                return None
-            return outcome["matches"][0].get("FullName")
-        except Exception:
-            self.logger.exception(
-                "Failed to query customer parent for ParentRef.ListID=%s",
-                parent_list_id,
-            )
-            return None
+        """Return a prefetched parent FullName for ParentRef.ListID lookup."""
+        return self._parent_full_name_cache.get(parent_list_id)
 
 
 class VendorsSink(QbwcListUpsertBatchSink):

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from target_qbwc.customer_lookup import customer_full_name_for_lookup
+from target_qbwc.customer_lookup import customer_full_name_for_lookup, parent_list_id_for_lookup
 
 
 class TestCustomerLookup(unittest.TestCase):
@@ -79,3 +79,26 @@ class TestCustomerLookup(unittest.TestCase):
             with self.subTest(parent_ref=parent_ref):
                 payload = {"Name": "SpaceX", "ParentRef": parent_ref}
                 self.assertEqual(customer_full_name_for_lookup(payload), "SpaceX")
+
+    def test_parent_list_id_for_lookup(self):
+        self.assertIsNone(parent_list_id_for_lookup({"Name": "SpaceX"}))
+        self.assertIsNone(
+            parent_list_id_for_lookup(
+                {
+                    "ListID": "80000009-1750961692",
+                    "Name": "SpaceX",
+                    "ParentRef": {"ListID": "parent-id"},
+                }
+            )
+        )
+        self.assertIsNone(
+            parent_list_id_for_lookup(
+                {"Name": "SpaceX", "ParentRef": {"FullName": "Elon Musk"}},
+            )
+        )
+        self.assertEqual(
+            parent_list_id_for_lookup(
+                {"Name": "SpaceX", "ParentRef": {"ListID": "80000009-1750961692"}},
+            ),
+            "80000009-1750961692",
+        )

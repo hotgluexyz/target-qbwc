@@ -67,3 +67,23 @@ def customer_full_name_for_lookup(
         )
 
     return name
+
+
+def parent_list_id_for_lookup(payload: dict[str, Any]) -> str | None:
+    """Return ParentRef.ListID when lookup will resolve the parent FullName by ListID."""
+    if payload.get("ListID"):
+        return None
+
+    name = payload.get("Name")
+    if not name:
+        return None
+
+    parent_ref_raw = payload.get("ParentRef")
+    if not isinstance(parent_ref_raw, dict):
+        return None
+
+    if parent_ref_raw.get("FullName"):
+        return None
+
+    parent_list_id = parent_ref_raw.get("ListID")
+    return parent_list_id if parent_list_id else None

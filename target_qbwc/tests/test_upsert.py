@@ -487,18 +487,14 @@ def test_build_lookup_query_element_stitches_parent_full_name(customers_sink: Cu
 
 def test_build_lookup_query_element_stitches_parent_list_id(customers_sink: CustomersSink):
     """Resolve ParentRef.ListID to parent FullName before lookup."""
-    with patch.object(
-        customers_sink,
-        "_query_customer_full_name_by_list_id",
-        return_value="Elon Musk",
-    ):
-        query_element = customers_sink._build_lookup_query_element(
-            {
-                "Name": "SpaceX",
-                "ParentRef": {"ListID": "80000009-1750961692"},
-            },
-            "1",
-        )
+    customers_sink._parent_full_name_cache = {"80000009-1750961692": "Elon Musk"}
+    query_element = customers_sink._build_lookup_query_element(
+        {
+            "Name": "SpaceX",
+            "ParentRef": {"ListID": "80000009-1750961692"},
+        },
+        "1",
+    )
 
     assert query_element == {
         "CustomerQueryRq": {
@@ -506,6 +502,90 @@ def test_build_lookup_query_element_stitches_parent_list_id(customers_sink: Cust
             "FullName": "Elon Musk:SpaceX",
         }
     }
+
+
+def test_execute_lookup_queries_prefetches_unique_parent_list_ids(customers_sink: CustomersSink):
+    """Batch parent ListID lookups once before the customer lookup batch."""
+    staged_records = [
+        customers_sink.process_batch_record(
+            {
+                "externalId": "sub-1",
+                "Name": "SpaceX",
+                "ParentRef": {"ListID": "80000009-1750961692"},
+            },
+            0,
+        ),
+        customers_sink.process_batch_record(
+            {
+                "externalId": "sub-2",
+                "Name": "Tesla",
+                "ParentRef": {"ListID": "80000009-1750961692"},
+            },
+            1,
+        ),
+        customers_sink.process_batch_record(
+            {
+                "externalId": "sub-3",
+                "Name": "Neuralink",
+                "ParentRef": {"ListID": "80000010-1750961693"},
+            },
+            2,
+        ),
+    ]
+    parent_query_response = {
+        "CustomerQueryRs": [
+            {
+                "@requestID": "parent-80000009-1750961692",
+                "@statusCode": "0",
+                "CustomerRet": {"ListID": "80000009-1750961692", "FullName": "Elon Musk"},
+            },
+            {
+                "@requestID": "parent-80000010-1750961693",
+                "@statusCode": "0",
+                "CustomerRet": {"ListID": "80000010-1750961693", "FullName": "HoldCo"},
+            },
+        ]
+    }
+    lookup_query_response = {
+        "CustomerQueryRs": [
+            {
+                "@requestID": "0",
+                "@statusCode": "500",
+                "@statusMessage": 'The required element ("Elon Musk:SpaceX") could not be found in QuickBooks.',
+            },
+            {
+                "@requestID": "1",
+                "@statusCode": "500",
+                "@statusMessage": 'The required element ("Elon Musk:Tesla") could not be found in QuickBooks.',
+            },
+            {
+                "@requestID": "2",
+                "@statusCode": "500",
+                "@statusMessage": 'The required element ("HoldCo:Neuralink") could not be found in QuickBooks.',
+            },
+        ]
+    }
+
+    with patch.object(
+        customers_sink,
+        "send_qbxml_batch",
+        side_effect=[parent_query_response, lookup_query_response],
+    ) as send_batch:
+        outcomes = customers_sink._execute_lookup_queries(staged_records)
+
+    assert send_batch.call_count == 2
+    parent_batch = send_batch.call_args_list[0].args[0]
+    assert len(parent_batch) == 2
+    assert parent_batch[0]["CustomerQueryRq"]["ListID"] == "80000009-1750961692"
+    assert parent_batch[1]["CustomerQueryRq"]["ListID"] == "80000010-1750961693"
+
+    lookup_batch = send_batch.call_args_list[1].args[0]
+    assert lookup_batch[0]["CustomerQueryRq"]["FullName"] == "Elon Musk:SpaceX"
+    assert lookup_batch[1]["CustomerQueryRq"]["FullName"] == "Elon Musk:Tesla"
+    assert lookup_batch[2]["CustomerQueryRq"]["FullName"] == "HoldCo:Neuralink"
+    assert len(outcomes) == 3
+    assert all(outcome["query_failed"] is False for outcome in outcomes)
+    assert all(outcome["matches"] == [] for outcome in outcomes)
 
 
 def test_build_lookup_query_element_uses_list_id_when_present(customers_sink: CustomersSink):
