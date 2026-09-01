@@ -206,10 +206,17 @@ def test_collect_input_merges_json_and_singer(tmp_path: Path):
     ]
 
 
-def test_collect_input_raises_when_both_sources_empty(tmp_path: Path):
-    """An empty job fails fast when neither input source has records."""
-    with pytest.raises(ValueError, match="No input records found"):
-        collect_input({"input_path": str(tmp_path)}, io.StringIO(""), KNOWN_STREAMS)
+def test_collect_input_returns_empty_when_both_sources_empty(tmp_path: Path, caplog):
+    """An empty job is a no-op when neither input source has records."""
+    with caplog.at_level("INFO", logger="target_qbwc.input"):
+        records = collect_input(
+            {"input_path": str(tmp_path)},
+            io.StringIO(""),
+            KNOWN_STREAMS,
+        )
+
+    assert records == {}
+    assert "No input records found in stdin or input_path; nothing to export." in caplog.text
 
 
 def test_run_ordered_streams_follows_stream_order_and_drains_between_streams():
