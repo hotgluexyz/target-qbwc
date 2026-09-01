@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from io import IOBase
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TextIO
@@ -11,6 +12,8 @@ from hotglue_singer_sdk.io_base import SingerMessageType
 
 if TYPE_CHECKING:
     from target_qbwc.target import TargetQbwc
+
+logger = logging.getLogger(__name__)
 
 STREAM_ORDER: tuple[str, ...] = (
     "customer",
@@ -137,7 +140,7 @@ def collect_input(
     stdin: TextIO | IOBase | None,
     known_streams: frozenset[str] | set[str],
 ) -> dict[str, list[dict[str, Any]]]:
-    """Load entity JSON and Singer stdin, merge them, and fail when both are empty."""
+    """Load entity JSON and Singer stdin, merge them, and return {} when both are empty."""
     json_by_stream: dict[str, list[dict[str, Any]]] = {}
     input_path = config.get("input_path")
     if input_path:
@@ -147,7 +150,8 @@ def collect_input(
     singer_by_stream = load_singer_stdin(singer_stdin)
     merged = merge_records_by_stream(json_by_stream, singer_by_stream)
     if not merged or not any(records for records in merged.values()):
-        raise ValueError("No input records found in stdin or input_path")
+        logger.info("No input records found in stdin or input_path; nothing to export.")
+        return {}
     return merged
 
 
