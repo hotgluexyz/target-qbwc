@@ -9,7 +9,12 @@ from qbwc_common import normalize_rs_list
 from target_qbwc.bill_sink import QbwcBillUpsertBatchSink
 from target_qbwc.customer_lookup import customer_full_name_for_lookup, parent_list_id_for_lookup
 from target_qbwc.uom_sink import QbwcUomTxnMixin
-from target_qbwc.client_upsert import QbwcListUpsertBatchSink, QbwcTxnUpsertBatchSink, filter_matches_by_vendor_ref
+from target_qbwc.client_upsert import (
+    QbwcItemUpsertBatchSink,
+    QbwcListUpsertBatchSink,
+    QbwcTxnUpsertBatchSink,
+    filter_matches_by_vendor_ref,
+)
 
 
 class CustomersSink(QbwcListUpsertBatchSink):
@@ -97,21 +102,21 @@ class VendorsSink(QbwcListUpsertBatchSink):
     qbxml_entity = "Vendor"
 
 
-class ItemInventorySink(QbwcListUpsertBatchSink):
+class ItemInventorySink(QbwcItemUpsertBatchSink):
     """Writes inventory item records to QuickBooks Desktop."""
 
     name = "item_inventory"
     qbxml_entity = "ItemInventory"
 
 
-class ItemNonInventorySink(QbwcListUpsertBatchSink):
+class ItemNonInventorySink(QbwcItemUpsertBatchSink):
     """Writes non-inventory item records to QuickBooks Desktop."""
 
     name = "item_noninventory"
     qbxml_entity = "ItemNonInventory"
 
 
-class ItemSalesTaxSink(QbwcListUpsertBatchSink):
+class ItemSalesTaxSink(QbwcItemUpsertBatchSink):
     """Writes sales tax item records to QuickBooks Desktop."""
 
     name = "item_sales_tax"

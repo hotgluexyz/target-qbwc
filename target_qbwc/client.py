@@ -186,6 +186,8 @@ class QbwcBatchSink(QbwcTransportMixin, HotglueBatchSink):
 
     def update_state(self, state: dict, is_duplicate: bool = False, record: dict | None = None):
         """Log per-record outcomes; batch sinks do not get this from the SDK by default."""
+        if state.pop("is_existing", False):
+            is_duplicate = True
         if state.get("success") and not is_duplicate:
             parts = []
             if state.get("id"):
@@ -301,6 +303,24 @@ class QbwcBatchSink(QbwcTransportMixin, HotglueBatchSink):
         """Hook for subclasses to add fields to a successful batch item state."""
         return state
 
+    def _build_existing_skip_state(
+        self,
+        record_hash: str,
+        external_id: str | None,
+        existing_id: str | None,
+    ) -> dict[str, Any]:
+        """Return success state for a record skipped because the entity already exists."""
+        state: dict[str, Any] = {
+            "success": True,
+            "hash": record_hash,
+            "is_existing": True,
+        }
+        if existing_id:
+            state["id"] = existing_id
+        if external_id:
+            state["externalId"] = str(external_id)
+        return state
+
     def make_batch_request(self, records: list[dict]) -> dict:
         """Send one batched QBXML message and pair each *Rs with its staged record."""
         valid_records = [record for record in records if "preprocess_error" not in record]
@@ -344,6 +364,17 @@ class QbwcBatchSink(QbwcTransportMixin, HotglueBatchSink):
         """Convert paired batch results into per-record hotglue state updates."""
         state_updates = []
         for item in result.get("items", []):
+            if item.get("existing_skip"):
+                _, _, record_hash, external_id = self._batch_item_context(item)
+                state_updates.append(
+                    self._build_existing_skip_state(
+                        record_hash,
+                        external_id,
+                        item.get("existing_id") or item["record"].get("resolved_entity_id"),
+                    )
+                )
+                continue
+
             error_state = self._build_batch_item_error_state(item)
             if error_state is not None:
                 state_updates.append(error_state)
