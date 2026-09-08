@@ -36,6 +36,7 @@ pip install -e .
 | `is_sandbox` | No | Use the QA sandbox environment. Defaults to `false` |
 | `batch_size` | No | Maximum records per QBXML batch message. Defaults to `100` |
 | `input_path` | No | Directory of entity JSON files (`customer.json`, `invoice.json`, ...). See [Input formats and processing order](#input-formats-and-processing-order) |
+| `only_create_streams` | No | Stream names that never receive Mod requests. Lookup matches are reported as existing; unmatched records are added. See [`only_create_streams`](#only_create_streams) |
 
 Example `config.json`:
 
@@ -114,6 +115,21 @@ Singer stream names are singular snake_case (for example `customer`, `invoice`, 
 
 Send Add-shaped payloads. Before each write, the target queries QuickBooks using the stream's lookup keys (see the table below). When a match is found, it issues a Mod with `ListID` or `TxnID` and `EditSequence` from the queried record. When no match is found, it issues an Add.
 
+### `only_create_streams`
+
+Optional list of stream names that never receive Mod requests. For streams in this list:
+
+- Lookup match → reported as **existing** (no write)
+- No match → **Add**
+
+Streams not listed keep full upsert behaviour. When unset, every upsert stream can add or mod.
+
+### Item lookup across types
+
+`item_inventory`, `item_noninventory`, and `item_sales_tax` look up names with cross-type `ItemQueryRq`. If the name already exists on a different item type, the record is reported as **existing** instead of failing on add.
+
+When multiple input records in one batch target the same entity, only the first write is sent. Later siblings are reported as **existing** so stale `EditSequence` errors and duplicate-name add failures are avoided. For duplicate adds with the same lookup key but different payloads, the first record wins.
+
 ## Batching and per-record errors
 
 The Singer SDK groups input records into batches of up to `batch_size` config option (default **100**). Each batch is processed on its own. A failure on one record does not roll back siblings in the same batch or stop later batches.
@@ -143,9 +159,9 @@ Each outcome is written to `bookmarks.<stream>` and rolled up in `summary.<strea
 |---|---|---|---|---|
 | `customer` | `CustomerAddRq` | `CustomerModRq` | `ListID`, then `Name` | `ListID` |
 | `vendor` | `VendorAddRq` | `VendorModRq` | `ListID`, then `Name` | `ListID` |
-| `item_inventory` | `ItemInventoryAddRq` | `ItemInventoryModRq` | `ListID`, then `Name` | `ListID` |
-| `item_noninventory` | `ItemNonInventoryAddRq` | `ItemNonInventoryModRq` | `ListID`, then `Name` | `ListID` |
-| `item_sales_tax` | `ItemSalesTaxAddRq` | `ItemSalesTaxModRq` | `ListID`, then `Name` | `ListID` |
+| `item_inventory` | `ItemInventoryAddRq` | `ItemInventoryModRq` | `ListID`, then `Name` (cross-type `ItemQueryRq`) | `ListID` |
+| `item_noninventory` | `ItemNonInventoryAddRq` | `ItemNonInventoryModRq` | `ListID`, then `Name` (cross-type `ItemQueryRq`) | `ListID` |
+| `item_sales_tax` | `ItemSalesTaxAddRq` | `ItemSalesTaxModRq` | `ListID`, then `Name` (cross-type `ItemQueryRq`) | `ListID` |
 | `purchase_order` | `PurchaseOrderAddRq` | `PurchaseOrderModRq` | `TxnID`, then `RefNumber` (RefNumber scoped by `VendorRef`) | `TxnID` |
 | `sales_order` | `SalesOrderAddRq` | `SalesOrderModRq` | `TxnID`, then `RefNumber` | `TxnID` |
 | `invoice` | `InvoiceAddRq` | `InvoiceModRq` | `TxnID`, then `RefNumber` | `TxnID` |

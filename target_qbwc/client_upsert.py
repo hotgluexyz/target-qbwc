@@ -9,6 +9,7 @@ from hotglue_etl_exceptions import InvalidPayloadError
 from qbwc_common import filter_dict_for_mod, get_mod_element_names, normalize_rs_list, parse_rs_element
 
 from target_qbwc.client import QbwcBatchSink
+from target_qbwc.item_lookup import extract_typed_item_matches
 
 LOOKUP_QUERY_FAILED_MESSAGE = "Lookup query failed; not writing to avoid a duplicate"
 
@@ -75,6 +76,43 @@ class QbwcUpsertBatchSink(QbwcBatchSink):
 
     lookup_fields: list[tuple[str, str]]
     _batch_item_error_keys = ("ambiguous_error", "lookup_error", "preprocess_error")
+
+    def _is_only_create_stream(self) -> bool:
+        """Return whether this stream is configured for add-only writes."""
+        only_create_streams = self.config.get("only_create_streams") or []
+        return self.name in only_create_streams
+
+    def _match_ret_element_name(
+        self,
+        query_outcome: dict[str, Any],
+        existing: dict[str, Any],
+    ) -> str | None:
+        """Return the query *Ret element name for one matched entity when available."""
+        match_ret_types = query_outcome.get("match_ret_types")
+        if not match_ret_types:
+            return None
+
+        matches = query_outcome.get("matches", [])
+        entity_id = existing.get(self.id_field)
+        if entity_id:
+            for index, match in enumerate(matches):
+                if match.get(self.id_field) == entity_id:
+                    return match_ret_types[index]
+
+        if len(matches) == 1 and len(match_ret_types) == 1:
+            return match_ret_types[0]
+        return None
+
+    def _should_treat_match_as_existing(
+        self,
+        query_outcome: dict[str, Any],
+        existing: dict[str, Any],
+    ) -> bool:
+        """Return whether a lookup match should skip the write and count as existing."""
+        if self._is_only_create_stream():
+            return True
+        ret_element_name = self._match_ret_element_name(query_outcome, existing)
+        return ret_element_name is not None and ret_element_name != self.query_ret_element_name
 
     @property
     def query_request_element_name(self) -> str:
@@ -213,18 +251,20 @@ class QbwcUpsertBatchSink(QbwcBatchSink):
         external_id_log = _format_external_id_log(staged.get("external_id"))
         lookup_match = _first_lookup_match(payload, self.lookup_fields)
 
-        if write_op == "mod":
+        if write_op in ("mod", "existing"):
             lookup_fragment = ""
             if lookup_match is not None:
                 payload_key, query_element, value = lookup_match
                 value = self._resolve_lookup_query_value(payload, payload_key, query_element, value)
                 lookup_fragment = f"lookup matched {query_element}={value}, "
+            suffix = "op: mod" if write_op == "mod" else "existing"
             self.logger.info(
-                "%s %sid: %s, %sop: mod",
+                "%s %sid: %s, %s%s",
                 self.name,
                 lookup_fragment,
                 existing_id,
                 external_id_log,
+                suffix,
             )
             return
 
@@ -245,6 +285,19 @@ class QbwcUpsertBatchSink(QbwcBatchSink):
             value,
             external_id_log,
         )
+
+    def _build_existing_skip_request(
+        self,
+        staged: dict[str, Any],
+        existing: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Skip add/mod for a lookup match that should count as existing."""
+        existing_id = existing.get(self.id_field)
+        self._log_write_decision(staged, "existing", existing_id)
+        return {
+            "existing_skip": True,
+            "resolved_entity_id": existing_id,
+        }
 
     def _build_write_request(
         self,
@@ -267,6 +320,9 @@ class QbwcUpsertBatchSink(QbwcBatchSink):
 
         if len(matches) == 1:
             existing = matches[0]
+            if self._should_treat_match_as_existing(query_outcome, existing):
+                return self._build_existing_skip_request(staged, existing)
+
             self._log_write_decision(staged, "mod", existing.get(self.id_field))
             mod_payload = self._merge_for_mod(existing, staged["payload"])
             request_element = {
@@ -279,6 +335,7 @@ class QbwcUpsertBatchSink(QbwcBatchSink):
                 "request_element": request_element,
                 "write_op": "mod",
                 "write_response_element": self.mod_response_element_name,
+                "resolved_entity_id": existing.get(self.id_field),
                 "preprocess_error": self._validate_request_element(request_element),
             }
 
@@ -341,6 +398,127 @@ class QbwcUpsertBatchSink(QbwcBatchSink):
             outcomes[index] = outcome
 
         return [outcome or {"matches": [], "query_failed": False} for outcome in outcomes]
+
+    def _lookup_dedupe_key(self, staged: dict[str, Any]) -> tuple[str, str] | None:
+        """Return a stable lookup key for duplicate add deduplication within one batch."""
+        match = _first_lookup_match(staged["payload"], self.lookup_fields)
+        if match is None:
+            return None
+        payload_key, query_element, value = match
+        value = self._resolve_lookup_query_value(
+            staged["payload"],
+            payload_key,
+            query_element,
+            value,
+        )
+        if value is None or value == "":
+            return None
+        normalized = str(value)
+        if query_element in {"FullName", "RefNumber"}:
+            normalized = normalized.lower()
+        return (query_element, normalized)
+
+    def _mark_existing_skip_item(
+        self,
+        staged: dict[str, Any],
+        items_by_request_id: dict[str, dict[str, Any]],
+        existing_id: str | None,
+    ) -> None:
+        """Stage one batch item that should count as an existing entity."""
+        items_by_request_id[staged["request_id"]] = {
+            "record": staged,
+            "existing_skip": True,
+            "existing_id": existing_id,
+        }
+        self._log_write_decision(staged, "existing", existing_id)
+
+    def _partition_duplicate_writes(
+        self,
+        write_staged: list[dict[str, Any]],
+        items_by_request_id: dict[str, dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
+        """Send one write per entity id or add lookup key and queue later siblings."""
+        seen_mod_ids: set[str] = set()
+        primary_add_by_key: dict[tuple[str, str], str] = {}
+        pending_add_siblings: dict[str, list[dict[str, Any]]] = {}
+        unique_writes: list[dict[str, Any]] = []
+
+        for staged in write_staged:
+            write_op = staged.get("write_op")
+
+            if write_op == "mod":
+                entity_id = staged.get("resolved_entity_id")
+                if entity_id and entity_id in seen_mod_ids:
+                    self._mark_existing_skip_item(staged, items_by_request_id, entity_id)
+                    continue
+                if entity_id:
+                    seen_mod_ids.add(entity_id)
+                unique_writes.append(staged)
+                continue
+
+            if write_op == "add":
+                dedupe_key = self._lookup_dedupe_key(staged)
+                if dedupe_key is None:
+                    unique_writes.append(staged)
+                    continue
+
+                primary_request_id = primary_add_by_key.get(dedupe_key)
+                if primary_request_id is not None:
+                    pending_add_siblings.setdefault(primary_request_id, []).append(staged)
+                    query_element, value = dedupe_key
+                    external_id_log = _format_external_id_log(staged.get("external_id"))
+                    self.logger.info(
+                        "%s duplicate add suppressed %s=%s, %sdeferred to request_id=%s",
+                        self.name,
+                        query_element,
+                        value,
+                        external_id_log,
+                        primary_request_id,
+                    )
+                    continue
+
+                primary_add_by_key[dedupe_key] = staged["request_id"]
+                unique_writes.append(staged)
+                continue
+
+            unique_writes.append(staged)
+
+        return unique_writes, pending_add_siblings
+
+    def _resolve_pending_duplicate_adds(
+        self,
+        items_by_request_id: dict[str, dict[str, Any]],
+        pending_add_siblings: dict[str, list[dict[str, Any]]],
+    ) -> None:
+        """Mirror the primary add outcome onto deferred duplicate-add siblings."""
+        for primary_request_id, siblings in pending_add_siblings.items():
+            primary_item = items_by_request_id.get(primary_request_id, {})
+            primary_response = primary_item.get("response")
+
+            for sibling in siblings:
+                request_id = sibling["request_id"]
+                if not primary_response:
+                    items_by_request_id[request_id] = {
+                        "record": sibling,
+                        "response": None,
+                    }
+                    continue
+
+                raw_status = primary_response.get("status_code")
+                status_code = int(raw_status) if raw_status is not None else -1
+                if status_code == 0:
+                    entity = primary_response.get("entity") or {}
+                    self._mark_existing_skip_item(
+                        sibling,
+                        items_by_request_id,
+                        entity.get(self.id_field),
+                    )
+                    continue
+
+                items_by_request_id[request_id] = {
+                    "record": sibling,
+                    "response": primary_response,
+                }
 
     def _execute_write_batch(self, write_staged: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Send one batched write message and pair each *Rs with its staged record."""
@@ -417,7 +595,20 @@ class QbwcUpsertBatchSink(QbwcBatchSink):
                 }
                 continue
 
+            if write_request.get("existing_skip"):
+                items_by_request_id[staged["request_id"]] = {
+                    "record": {**staged, **write_request},
+                    "existing_skip": True,
+                    "existing_id": write_request.get("resolved_entity_id"),
+                }
+                continue
+
             write_staged.append({**staged, **write_request})
+
+        write_staged, pending_add_siblings = self._partition_duplicate_writes(
+            write_staged,
+            items_by_request_id,
+        )
 
         if write_staged:
             add_count = sum(1 for staged in write_staged if staged.get("write_op") == "add")
@@ -432,6 +623,8 @@ class QbwcUpsertBatchSink(QbwcBatchSink):
             for item in self._execute_write_batch(write_staged):
                 staged = item["record"]
                 items_by_request_id[staged["request_id"]] = item
+
+            self._resolve_pending_duplicate_adds(items_by_request_id, pending_add_siblings)
 
         return {
             "items": [items_by_request_id[staged["request_id"]] for staged in records]
@@ -454,6 +647,42 @@ class QbwcListUpsertBatchSink(QbwcUpsertBatchSink):
 
     id_field = "ListID"
     lookup_fields = [("ListID", "ListID"), ("Name", "FullName")]
+
+
+class QbwcItemUpsertBatchSink(QbwcListUpsertBatchSink):
+    """Upsert sink for item list entities looked up across all item types."""
+
+    @property
+    def query_request_element_name(self) -> str:
+        """Return ItemQueryRq for cross-type item name lookup."""
+        return "ItemQueryRq"
+
+    @property
+    def query_response_element_name(self) -> str:
+        """Return ItemQueryRs for cross-type item name lookup."""
+        return "ItemQueryRs"
+
+    def _interpret_query_response(self, rs_element: dict[str, Any] | None) -> dict[str, Any]:
+        """Parse ItemQueryRs into typed matches and not-found handling."""
+        if rs_element is None:
+            return {"matches": [], "query_failed": True}
+
+        raw_status = rs_element.get("@statusCode")
+        status_code = int(raw_status) if raw_status is not None else -1
+        status_message = str(rs_element.get("@statusMessage", ""))
+
+        if status_code == 0:
+            typed_matches = extract_typed_item_matches(rs_element)
+            return {
+                "matches": [entity for _, entity in typed_matches],
+                "match_ret_types": [ret_name for ret_name, _ in typed_matches],
+                "query_failed": False,
+            }
+
+        if status_code == 500 and "could not be found" in status_message.lower():
+            return {"matches": [], "query_failed": False}
+
+        return {"matches": [], "query_failed": True}
 
 
 class QbwcTxnUpsertBatchSink(QbwcUpsertBatchSink):
