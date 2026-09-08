@@ -728,6 +728,60 @@ def test_make_batch_request_duplicate_mod_targets_one_write(customers_sink: Cust
     assert updates[1].get("is_existing") is True
 
 
+def test_make_batch_request_duplicate_mod_shares_primary_failure(customers_sink: CustomersSink):
+    """Fail deferred duplicate mods when the primary mod is rejected."""
+    staged_one = customers_sink.process_batch_record(
+        {
+            "externalId": "cust-1",
+            "Name": "101",
+            "CompanyName": "Thomas Produce (DEMO)",
+        },
+        0,
+    )
+    staged_two = customers_sink.process_batch_record(
+        {
+            "externalId": "cust-2",
+            "Name": "101",
+            "CompanyName": "Thomas Produce (DEMO)",
+        },
+        1,
+    )
+    query_response = {
+        "CustomerQueryRs": [
+            {
+                "@requestID": "0",
+                "@statusCode": "0",
+                "CustomerRet": _customer_ret(Name="101", FullName="101"),
+            },
+            {
+                "@requestID": "1",
+                "@statusCode": "0",
+                "CustomerRet": _customer_ret(Name="101", FullName="101"),
+            },
+        ]
+    }
+    write_response = {
+        "CustomerModRs": {
+            "@requestID": "0",
+            "@statusCode": "3200",
+            "@statusMessage": 'The provided edit sequence "1788366214" is out-of-date.',
+        }
+    }
+
+    with patch.object(
+        customers_sink,
+        "send_qbxml_batch",
+        side_effect=[query_response, write_response],
+    ):
+        result = customers_sink.make_batch_request([staged_one, staged_two])
+
+    handled = customers_sink.handle_batch_response(result)
+    updates = handled["state_updates"]
+    assert updates[0]["success"] is False
+    assert updates[1]["success"] is False
+    assert "out-of-date" in updates[1]["error"]
+
+
 def test_make_batch_request_duplicate_add_targets_one_write(customers_sink: CustomersSink):
     """Send one add per lookup key and mark later siblings as existing."""
     staged_one = customers_sink.process_batch_record(

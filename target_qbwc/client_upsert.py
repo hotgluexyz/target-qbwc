@@ -438,9 +438,9 @@ class QbwcUpsertBatchSink(QbwcBatchSink):
         items_by_request_id: dict[str, dict[str, Any]],
     ) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
         """Send one write per entity id or add lookup key and queue later siblings."""
-        seen_mod_ids: set[str] = set()
+        primary_mod_by_entity_id: dict[str, str] = {}
         primary_add_by_key: dict[tuple[str, str], str] = {}
-        pending_add_siblings: dict[str, list[dict[str, Any]]] = {}
+        pending_duplicate_siblings: dict[str, list[dict[str, Any]]] = {}
         unique_writes: list[dict[str, Any]] = []
 
         for staged in write_staged:
@@ -448,11 +448,21 @@ class QbwcUpsertBatchSink(QbwcBatchSink):
 
             if write_op == "mod":
                 entity_id = staged.get("resolved_entity_id")
-                if entity_id and entity_id in seen_mod_ids:
-                    self._mark_existing_skip_item(staged, items_by_request_id, entity_id)
-                    continue
                 if entity_id:
-                    seen_mod_ids.add(entity_id)
+                    primary_request_id = primary_mod_by_entity_id.get(entity_id)
+                    if primary_request_id is not None:
+                        pending_duplicate_siblings.setdefault(primary_request_id, []).append(staged)
+                        external_id_log = _format_external_id_log(staged.get("external_id"))
+                        self.logger.info(
+                            "%s duplicate mod suppressed %s=%s, %sdeferred to request_id=%s",
+                            self.name,
+                            self.id_field,
+                            entity_id,
+                            external_id_log,
+                            primary_request_id,
+                        )
+                        continue
+                    primary_mod_by_entity_id[entity_id] = staged["request_id"]
                 unique_writes.append(staged)
                 continue
 
@@ -464,7 +474,7 @@ class QbwcUpsertBatchSink(QbwcBatchSink):
 
                 primary_request_id = primary_add_by_key.get(dedupe_key)
                 if primary_request_id is not None:
-                    pending_add_siblings.setdefault(primary_request_id, []).append(staged)
+                    pending_duplicate_siblings.setdefault(primary_request_id, []).append(staged)
                     query_element, value = dedupe_key
                     external_id_log = _format_external_id_log(staged.get("external_id"))
                     self.logger.info(
@@ -483,15 +493,15 @@ class QbwcUpsertBatchSink(QbwcBatchSink):
 
             unique_writes.append(staged)
 
-        return unique_writes, pending_add_siblings
+        return unique_writes, pending_duplicate_siblings
 
-    def _resolve_pending_duplicate_adds(
+    def _resolve_pending_duplicate_siblings(
         self,
         items_by_request_id: dict[str, dict[str, Any]],
-        pending_add_siblings: dict[str, list[dict[str, Any]]],
+        pending_duplicate_siblings: dict[str, list[dict[str, Any]]],
     ) -> None:
-        """Mirror the primary add outcome onto deferred duplicate-add siblings."""
-        for primary_request_id, siblings in pending_add_siblings.items():
+        """Mirror the primary write outcome onto deferred duplicate siblings."""
+        for primary_request_id, siblings in pending_duplicate_siblings.items():
             primary_item = items_by_request_id.get(primary_request_id, {})
             primary_response = primary_item.get("response")
 
@@ -605,7 +615,7 @@ class QbwcUpsertBatchSink(QbwcBatchSink):
 
             write_staged.append({**staged, **write_request})
 
-        write_staged, pending_add_siblings = self._partition_duplicate_writes(
+        write_staged, pending_duplicate_siblings = self._partition_duplicate_writes(
             write_staged,
             items_by_request_id,
         )
@@ -624,7 +634,10 @@ class QbwcUpsertBatchSink(QbwcBatchSink):
                 staged = item["record"]
                 items_by_request_id[staged["request_id"]] = item
 
-            self._resolve_pending_duplicate_adds(items_by_request_id, pending_add_siblings)
+            self._resolve_pending_duplicate_siblings(
+                items_by_request_id,
+                pending_duplicate_siblings,
+            )
 
         return {
             "items": [items_by_request_id[staged["request_id"]] for staged in records]
