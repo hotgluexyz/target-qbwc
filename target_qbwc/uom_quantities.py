@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from decimal import Decimal, InvalidOperation
 from typing import Any, Callable, Iterator
 
@@ -61,6 +62,7 @@ def fix_line_quantity_based_on_uom(
     *,
     item: dict[str, Any] | None,
     uom_set: dict[str, Any] | None,
+    logger: logging.Logger | None = None,
 ) -> InvalidPayloadError | None:
     """Rescale one line Quantity to QuickBooks base units when UOM data is available."""
     if not line.get("Quantity") or not line.get("ItemRef"):
@@ -108,12 +110,24 @@ def fix_line_quantity_based_on_uom(
         )
 
     conversion_ratio = found_related_unit.get("ConversionRatio", 1)
+    old_quantity = line["Quantity"]
     try:
-        quantity = Decimal(str(line["Quantity"])) * Decimal(str(conversion_ratio))
+        quantity = Decimal(str(old_quantity)) * Decimal(str(conversion_ratio))
     except (InvalidOperation, ValueError, TypeError):
         item_ref_label = item_full_name or item_list_id
         return InvalidPayloadError(f"Item '{item_ref_label}': Quantity is not numeric.")
-    line["Quantity"] = format(quantity, "f")
+    new_quantity = format(quantity, "f")
+    line["Quantity"] = new_quantity
+    if logger is not None:
+        item_ref_label = item_full_name or item_list_id
+        logger.info(
+            "%s UOM rescale: item=%s unit=%s quantity %s -> %s",
+            stream,
+            item_ref_label,
+            line_uom,
+            old_quantity,
+            new_quantity,
+        )
     return None
 
 
@@ -130,6 +144,7 @@ def rescale_payload_uom_quantities(
     *,
     lookup_item: Callable[[dict[str, Any]], dict[str, Any] | None],
     lookup_uom_set: Callable[[str], dict[str, Any] | None],
+    logger: logging.Logger | None = None,
 ) -> InvalidPayloadError | None:
     """Rescale all affected line quantities on one transaction payload."""
     if stream in _UOM_STRIP_LINE_EXTERNAL_ID_STREAMS:
@@ -146,6 +161,7 @@ def rescale_payload_uom_quantities(
             stream,
             item=item,
             uom_set=uom_set,
+            logger=logger,
         )
         if error is not None:
             return error

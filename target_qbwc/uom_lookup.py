@@ -176,6 +176,7 @@ class UomBatchPreparer:
                 stream,
                 lookup_item=self._cache.lookup_item,
                 lookup_uom_set=self._cache.lookup_uom_set,
+                logger=self._sink.logger,
             )
             if error is not None:
                 staged["preprocess_error"] = error

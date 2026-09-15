@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 from hotglue_etl_exceptions import InvalidPayloadError
@@ -142,6 +144,33 @@ def test_fix_line_non_numeric_quantity_returns_payload_error():
     assert isinstance(error, InvalidPayloadError)
     assert "Quantity is not numeric" in str(error)
     assert line["Quantity"] == "not-a-number"
+
+
+def test_fix_line_logs_uom_rescale(caplog):
+    """Log one INFO line when a line quantity is rescaled to base units."""
+    line = {
+        "Quantity": "2",
+        "ItemRef": {"FullName": "4080K"},
+        "UnitOfMeasure": "case",
+    }
+    uom_logger = logging.getLogger("target-qbwc")
+
+    with caplog.at_level(logging.INFO, logger="target-qbwc"):
+        assert (
+            fix_line_quantity_based_on_uom(
+                line,
+                "vendor_credit",
+                item=uom_item(),
+                uom_set=uom_set(),
+                logger=uom_logger,
+            )
+            is None
+        )
+
+    assert (
+        "vendor_credit UOM rescale: item=4080K unit=case quantity 2 -> 20"
+        in caplog.text
+    )
 
 
 def test_rescale_payload_processes_all_invoice_lines():
