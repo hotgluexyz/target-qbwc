@@ -87,6 +87,14 @@ class TargetQbwc(TargetHotglue):
             th.StringType,
             description="Directory of entity JSON files (customer.json, invoice.json, ...)",
         ),
+        th.Property(
+            "only_create_streams",
+            th.ArrayType(th.StringType),
+            description=(
+                "Streams that never receive Mod requests. Lookup matches are reported "
+                "as existing; unmatched records are added."
+            ),
+        ),
     ).to_dict()
 
     @property

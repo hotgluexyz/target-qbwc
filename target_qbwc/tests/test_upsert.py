@@ -10,6 +10,7 @@ from hotglue_singer_sdk.exceptions import FatalAPIError
 
 from target_qbwc.client_upsert import LOOKUP_QUERY_FAILED_MESSAGE
 from target_qbwc.sinks import CustomersSink
+from target_qbwc.tests.conftest import make_sink
 
 
 def _customer_ret(**fields) -> dict:
@@ -605,4 +606,293 @@ def test_build_lookup_query_element_uses_list_id_when_present(customers_sink: Cu
             "ListID": "80000009-1750961692",
         }
     }
+
+
+def test_only_create_stream_skips_mod(target_config: dict):
+    """Treat lookup matches as existing when the stream is in only_create_streams."""
+    customers_sink = make_sink(
+        CustomersSink,
+        {**target_config, "only_create_streams": ["customer"]},
+    )
+    staged = {
+        "request_id": "0",
+        "external_id": "cust-existing",
+        "payload": {"Name": "HG-TGT-E2E-001", "CompanyName": "Updated Company"},
+    }
+    write_request = customers_sink._build_write_request(
+        staged,
+        {"matches": [_customer_ret()], "query_failed": False},
+    )
+
+    assert write_request["existing_skip"] is True
+    assert write_request["resolved_entity_id"] == "80002754-1786031476"
+
+
+def test_make_batch_request_only_create_skips_write(target_config: dict):
+    """Skip mod writes for streams configured in only_create_streams."""
+    customers_sink = make_sink(
+        CustomersSink,
+        {**target_config, "only_create_streams": ["customer"]},
+    )
+    staged = customers_sink.process_batch_record(
+        {
+            "externalId": "cust-existing",
+            "Name": "HG-TGT-E2E-001",
+            "CompanyName": "Updated Company",
+        },
+        0,
+    )
+    query_response = {
+        "CustomerQueryRs": {
+            "@requestID": "0",
+            "@statusCode": "0",
+            "CustomerRet": _customer_ret(),
+        }
+    }
+
+    with patch.object(
+        customers_sink,
+        "send_qbxml_batch",
+        return_value=query_response,
+    ) as send_batch:
+        result = customers_sink.make_batch_request([staged])
+
+    assert send_batch.call_count == 1
+    item = result["items"][0]
+    assert item["existing_skip"] is True
+
+    handled = customers_sink.handle_batch_response(result)
+    update = handled["state_updates"][0]
+    assert update["success"] is True
+    assert update.get("is_existing") is True
+
+
+def test_make_batch_request_duplicate_mod_targets_one_write(customers_sink: CustomersSink):
+    """Send one mod per entity id and mark later siblings as existing."""
+    staged_one = customers_sink.process_batch_record(
+        {
+            "externalId": "cust-1",
+            "Name": "101",
+            "CompanyName": "Thomas Produce (DEMO)",
+        },
+        0,
+    )
+    staged_two = customers_sink.process_batch_record(
+        {
+            "externalId": "cust-2",
+            "Name": "101",
+            "CompanyName": "Thomas Produce (DEMO)",
+        },
+        1,
+    )
+    query_response = {
+        "CustomerQueryRs": [
+            {
+                "@requestID": "0",
+                "@statusCode": "0",
+                "CustomerRet": _customer_ret(Name="101", FullName="101"),
+            },
+            {
+                "@requestID": "1",
+                "@statusCode": "0",
+                "CustomerRet": _customer_ret(Name="101", FullName="101"),
+            },
+        ]
+    }
+    write_response = {
+        "CustomerModRs": {
+            "@requestID": "0",
+            "@statusCode": "0",
+            "@statusMessage": "Status OK",
+            "CustomerRet": {"ListID": "80002754-1786031476"},
+        }
+    }
+
+    with patch.object(
+        customers_sink,
+        "send_qbxml_batch",
+        side_effect=[query_response, write_response],
+    ) as send_batch:
+        result = customers_sink.make_batch_request([staged_one, staged_two])
+
+    assert send_batch.call_count == 2
+    write_batch = send_batch.call_args_list[1].args[0]
+    assert len(write_batch) == 1
+    assert write_batch[0]["CustomerModRq"]["@requestID"] == "0"
+
+    handled = customers_sink.handle_batch_response(result)
+    updates = handled["state_updates"]
+    assert updates[0]["success"] is True
+    assert updates[0].get("is_updated") is True
+    assert updates[1]["success"] is True
+    assert updates[1].get("is_existing") is True
+
+
+def test_make_batch_request_duplicate_mod_shares_primary_failure(customers_sink: CustomersSink):
+    """Fail deferred duplicate mods when the primary mod is rejected."""
+    staged_one = customers_sink.process_batch_record(
+        {
+            "externalId": "cust-1",
+            "Name": "101",
+            "CompanyName": "Thomas Produce (DEMO)",
+        },
+        0,
+    )
+    staged_two = customers_sink.process_batch_record(
+        {
+            "externalId": "cust-2",
+            "Name": "101",
+            "CompanyName": "Thomas Produce (DEMO)",
+        },
+        1,
+    )
+    query_response = {
+        "CustomerQueryRs": [
+            {
+                "@requestID": "0",
+                "@statusCode": "0",
+                "CustomerRet": _customer_ret(Name="101", FullName="101"),
+            },
+            {
+                "@requestID": "1",
+                "@statusCode": "0",
+                "CustomerRet": _customer_ret(Name="101", FullName="101"),
+            },
+        ]
+    }
+    write_response = {
+        "CustomerModRs": {
+            "@requestID": "0",
+            "@statusCode": "3200",
+            "@statusMessage": 'The provided edit sequence "1788366214" is out-of-date.',
+        }
+    }
+
+    with patch.object(
+        customers_sink,
+        "send_qbxml_batch",
+        side_effect=[query_response, write_response],
+    ):
+        result = customers_sink.make_batch_request([staged_one, staged_two])
+
+    handled = customers_sink.handle_batch_response(result)
+    updates = handled["state_updates"]
+    assert updates[0]["success"] is False
+    assert updates[1]["success"] is False
+    assert "out-of-date" in updates[1]["error"]
+
+
+def test_make_batch_request_duplicate_add_targets_one_write(customers_sink: CustomersSink):
+    """Send one add per lookup key and mark later siblings as existing."""
+    staged_one = customers_sink.process_batch_record(
+        {
+            "externalId": "cust-add-1",
+            "Name": "HG-DUP-ADD-001",
+            "CompanyName": "First Company",
+        },
+        0,
+    )
+    staged_two = customers_sink.process_batch_record(
+        {
+            "externalId": "cust-add-2",
+            "Name": "HG-DUP-ADD-001",
+            "CompanyName": "Second Company",
+        },
+        1,
+    )
+    query_response = {
+        "CustomerQueryRs": [
+            {
+                "@requestID": "0",
+                "@statusCode": "500",
+                "@statusMessage": (
+                    'The query request has not been fully completed. There was a required element '
+                    '("HG-DUP-ADD-001") that could not be found in QuickBooks.'
+                ),
+            },
+            {
+                "@requestID": "1",
+                "@statusCode": "500",
+                "@statusMessage": (
+                    'The query request has not been fully completed. There was a required element '
+                    '("HG-DUP-ADD-001") that could not be found in QuickBooks.'
+                ),
+            },
+        ]
+    }
+    write_response = {
+        "CustomerAddRs": {
+            "@requestID": "0",
+            "@statusCode": "0",
+            "@statusMessage": "Status OK",
+            "CustomerRet": {"ListID": "80009999-1786041000"},
+        }
+    }
+
+    with patch.object(
+        customers_sink,
+        "send_qbxml_batch",
+        side_effect=[query_response, write_response],
+    ) as send_batch:
+        result = customers_sink.make_batch_request([staged_one, staged_two])
+
+    assert send_batch.call_count == 2
+    write_batch = send_batch.call_args_list[1].args[0]
+    assert len(write_batch) == 1
+    assert write_batch[0]["CustomerAddRq"]["CustomerAdd"]["CompanyName"] == "First Company"
+
+    handled = customers_sink.handle_batch_response(result)
+    updates = handled["state_updates"]
+    assert updates[0]["success"] is True
+    assert updates[0]["id"] == "80009999-1786041000"
+    assert updates[0].get("is_updated") is not True
+    assert updates[1]["success"] is True
+    assert updates[1]["id"] == "80009999-1786041000"
+    assert updates[1].get("is_existing") is True
+
+
+def test_make_batch_request_duplicate_add_shares_primary_failure(customers_sink: CustomersSink):
+    """Fail deferred duplicate adds when the primary add is rejected."""
+    staged_one = customers_sink.process_batch_record(
+        {"externalId": "cust-add-1", "Name": "HG-DUP-ADD-FAIL", "CompanyName": "First Company"},
+        0,
+    )
+    staged_two = customers_sink.process_batch_record(
+        {"externalId": "cust-add-2", "Name": "HG-DUP-ADD-FAIL", "CompanyName": "Second Company"},
+        1,
+    )
+    query_response = {
+        "CustomerQueryRs": [
+            {
+                "@requestID": "0",
+                "@statusCode": "500",
+                "@statusMessage": 'The required element ("HG-DUP-ADD-FAIL") could not be found in QuickBooks.',
+            },
+            {
+                "@requestID": "1",
+                "@statusCode": "500",
+                "@statusMessage": 'The required element ("HG-DUP-ADD-FAIL") could not be found in QuickBooks.',
+            },
+        ]
+    }
+    write_response = {
+        "CustomerAddRs": {
+            "@requestID": "0",
+            "@statusCode": "3100",
+            "@statusMessage": 'The name "HG-DUP-ADD-FAIL" of the list element is already in use.',
+        }
+    }
+
+    with patch.object(
+        customers_sink,
+        "send_qbxml_batch",
+        side_effect=[query_response, write_response],
+    ):
+        result = customers_sink.make_batch_request([staged_one, staged_two])
+
+    handled = customers_sink.handle_batch_response(result)
+    updates = handled["state_updates"]
+    assert updates[0]["success"] is False
+    assert updates[1]["success"] is False
+    assert "already in use" in updates[1]["error"]
 

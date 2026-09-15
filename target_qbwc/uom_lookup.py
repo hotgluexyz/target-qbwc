@@ -7,22 +7,8 @@ from typing import Any
 
 from qbwc_common import normalize_rs_list
 
+from target_qbwc.item_lookup import extract_item_query_results
 from target_qbwc.uom_quantities import iter_uom_lines, rescale_payload_uom_quantities
-
-_ITEM_QUERY_RET_KEYS = (
-    "ItemServiceRet",
-    "ItemNonInventoryRet",
-    "ItemOtherChargeRet",
-    "ItemInventoryRet",
-    "ItemInventoryAssemblyRet",
-    "ItemFixedAssetRet",
-    "ItemSubtotalRet",
-    "ItemDiscountRet",
-    "ItemPaymentRet",
-    "ItemSalesTaxRet",
-    "ItemSalesTaxGroupRet",
-    "ItemGroupRet",
-)
 
 
 @dataclass(frozen=True)
@@ -42,20 +28,6 @@ def item_ref_key(item_ref: dict[str, Any]) -> ItemRefKey | None:
     return ItemRefKey(list_id=list_id, full_name=full_name)
 
 
-def _extract_item_query_results(rs_element: dict[str, Any]) -> list[dict[str, Any]]:
-    """Return all item *Ret entities from one ItemQueryRs element."""
-    entities: list[dict[str, Any]] = []
-    for key in _ITEM_QUERY_RET_KEYS:
-        ret = rs_element.get(key)
-        if ret is None:
-            continue
-        if isinstance(ret, list):
-            entities.extend(ret)
-        else:
-            entities.append(ret)
-    return entities
-
-
 def _interpret_query_rs(
     rs_element: dict[str, Any] | None,
     ret_element_name: str,
@@ -70,7 +42,7 @@ def _interpret_query_rs(
         return []
 
     if ret_element_name == "ItemRet":
-        return _extract_item_query_results(rs_element)
+        return extract_item_query_results(rs_element)
 
     ret = rs_element.get(ret_element_name)
     if ret is None:

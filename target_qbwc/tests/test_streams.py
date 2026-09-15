@@ -24,6 +24,9 @@ from target_qbwc.tests.conftest import make_sink
 LIST_SINKS = [
     (CustomersSink, "customer", "Customer", "ListID"),
     (VendorsSink, "vendor", "Vendor", "ListID"),
+]
+
+ITEM_SINKS = [
     (ItemInventorySink, "item_inventory", "ItemInventory", "ListID"),
     (ItemNonInventorySink, "item_noninventory", "ItemNonInventory", "ListID"),
     (ItemSalesTaxSink, "item_sales_tax", "ItemSalesTax", "ListID"),
@@ -41,7 +44,7 @@ TXN_SINKS = [
 ]
 
 
-@pytest.mark.parametrize(("sink_cls", "name", "entity", "id_field"), LIST_SINKS + TXN_SINKS)
+@pytest.mark.parametrize(("sink_cls", "name", "entity", "id_field"), LIST_SINKS + ITEM_SINKS + TXN_SINKS)
 def test_sink_qbxml_element_names(sink_cls, name, entity, id_field, target_config):
     """Derive QBXML request and response element names from qbxml_entity."""
     sink = make_sink(sink_cls, target_config)
@@ -52,15 +55,19 @@ def test_sink_qbxml_element_names(sink_cls, name, entity, id_field, target_confi
     assert sink.request_element_name == f"{entity}AddRq"
     assert sink.response_element_name == f"{entity}AddRs"
     assert sink.entity_add_name == f"{entity}Add"
-    assert sink.query_request_element_name == f"{entity}QueryRq"
-    assert sink.query_response_element_name == f"{entity}QueryRs"
+    if sink_cls in {ItemInventorySink, ItemNonInventorySink, ItemSalesTaxSink}:
+        assert sink.query_request_element_name == "ItemQueryRq"
+        assert sink.query_response_element_name == "ItemQueryRs"
+    else:
+        assert sink.query_request_element_name == f"{entity}QueryRq"
+        assert sink.query_response_element_name == f"{entity}QueryRs"
     assert sink.query_ret_element_name == f"{entity}Ret"
     assert sink.mod_request_element_name == f"{entity}ModRq"
     assert sink.mod_response_element_name == f"{entity}ModRs"
     assert sink.entity_mod_name == f"{entity}Mod"
 
 
-@pytest.mark.parametrize(("sink_cls", "name", "entity", "id_field"), LIST_SINKS)
+@pytest.mark.parametrize(("sink_cls", "name", "entity", "id_field"), LIST_SINKS + ITEM_SINKS)
 def test_list_sink_lookup_fields(sink_cls, name, entity, id_field, target_config):
     """List sinks look up by ListID then Name."""
     sink = make_sink(sink_cls, target_config)
