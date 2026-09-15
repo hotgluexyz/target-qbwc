@@ -173,7 +173,7 @@ class BillsSink(QbwcBillUpsertBatchSink):
     qbxml_entity = "Bill"
 
 
-class VendorCreditsSink(QbwcTxnUpsertBatchSink):
+class VendorCreditsSink(QbwcUomTxnMixin, QbwcTxnUpsertBatchSink):
     """Writes vendor credit records to QuickBooks Desktop."""
 
     name = "vendor_credit"

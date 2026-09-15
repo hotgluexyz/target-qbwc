@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from target_qbwc.client import QbwcBatchSink
-from target_qbwc.sinks import BillsSink, CustomersSink, InvoicesSink, ItemNonInventorySink
+from target_qbwc.sinks import BillsSink, CustomersSink, InvoicesSink, ItemNonInventorySink, VendorCreditsSink
 from target_qbwc.target import TargetQbwc
 
 
@@ -97,3 +97,9 @@ def invoices_sink(target_config: dict) -> InvoicesSink:
 def item_noninventory_sink(target_config: dict) -> ItemNonInventorySink:
     """Return an ItemNonInventory upsert sink wired to a minimal target config."""
     return make_sink(ItemNonInventorySink, target_config)
+
+
+@pytest.fixture
+def vendor_credits_sink(target_config: dict) -> VendorCreditsSink:
+    """Return a VendorCredits upsert sink wired to a minimal target config."""
+    return make_sink(VendorCreditsSink, target_config)

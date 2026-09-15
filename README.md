@@ -138,7 +138,7 @@ Every QuickBooks round trip is one QBXML message with sibling requests and `onEr
 
 For upsert streams, one SDK batch can send several QBXML messages in order:
 
-1. **UOM prefetch** (`invoice`, `bill`, `credit_memo`, `purchase_order`): batched `ItemQueryRq` and `UnitOfMeasureSetQueryRq` for uncached items and UOM sets, deduped within the batch.
+1. **UOM prefetch** (`invoice`, `bill`, `credit_memo`, `purchase_order`, `vendor_credit`): batched `ItemQueryRq` and `UnitOfMeasureSetQueryRq` for uncached items and UOM sets, deduped within the batch.
 2. **Lookup**: batched `*QueryRq` per record to decide add vs mod.
 3. **Write**: batched `*AddRq` and/or `*ModRq` for records that passed lookup and validation.
 
@@ -173,10 +173,10 @@ Each outcome is written to `bookmarks.<stream>` and rolled up in `summary.<strea
 
 ### Unit of measure quantity rescaling
 
-For `invoice`, `bill`, `credit_memo`, and `purchase_order`, the target automatically rescales line `Quantity` to QuickBooks **base units** before writing when the line has `Quantity` and `ItemRef` and the item is linked to a `UnitOfMeasureSet`.
+For `invoice`, `bill`, `credit_memo`, `purchase_order`, and `vendor_credit`, the target automatically rescales line `Quantity` to QuickBooks **base units** before writing when the line has `Quantity` and `ItemRef` and the item is linked to a `UnitOfMeasureSet`.
 
 - Optional `UnitOfMeasure` on the line selects which unit the payload quantity is expressed in.
-- When `UnitOfMeasure` is omitted, the target uses the item's **Sales** default unit on `invoice` and `credit_memo`, and the **Purchase** default on `bill` and `purchase_order`.
+- When `UnitOfMeasure` is omitted, the target uses the item's **Sales** default unit on `invoice` and `credit_memo`, and the **Purchase** default on `bill`, `purchase_order`, and `vendor_credit`.
 - If the line unit matches the UOM set base unit, the quantity is left unchanged.
 - If the unit name is not valid for the item's UOM set, the record fails with `InvalidPayloadError` listing the valid units.
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from hotglue_etl_exceptions import InvalidPayloadError
 
 from target_qbwc.tests.conftest import uom_item, uom_set
@@ -93,8 +95,9 @@ def test_fix_line_uses_sales_default_when_uom_omitted_on_invoice():
     assert line["Quantity"] == "15"
 
 
-def test_fix_line_uses_purchase_default_on_bill():
-    """Default to the Purchase unit when UnitOfMeasure is omitted on bill lines."""
+@pytest.mark.parametrize("stream", ["bill", "vendor_credit"])
+def test_fix_line_uses_purchase_default_when_uom_omitted(stream: str):
+    """Default to the Purchase unit when UnitOfMeasure is omitted on purchase-side lines."""
     line = {
         "Quantity": "2",
         "ItemRef": {"FullName": "4080K"},
@@ -106,7 +109,7 @@ def test_fix_line_uses_purchase_default_on_bill():
         ]
     )
 
-    assert fix_line_quantity_based_on_uom(line, "bill", item=uom_item(), uom_set=uom_set_fixture) is None
+    assert fix_line_quantity_based_on_uom(line, stream, item=uom_item(), uom_set=uom_set_fixture) is None
     assert line["Quantity"] == "20"
 
 

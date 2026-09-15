@@ -292,6 +292,55 @@ def test_make_batch_request_bill_uom_preserves_line_external_ids(bills_sink):
     assert write_staged[0]["payload"]["ItemLineAdd"][0]["Quantity"] == "20"
 
 
+def test_make_batch_request_vendor_credit_uom_rescales_quantity(vendor_credits_sink):
+    """Apply UOM rescaling to vendor credit ItemLineAdd before write."""
+    staged = {
+        "request_id": "0",
+        "external_id": "vc-uom-1",
+        "payload": {
+            "RefNumber": "VC-UOM-1",
+            "VendorRef": {"FullName": "Vendor A"},
+            "ItemLineAdd": [
+                {
+                    "Quantity": "2",
+                    "ItemRef": {"FullName": "4080K"},
+                    "UnitOfMeasure": "case",
+                }
+            ],
+        },
+    }
+    item = uom_item()
+    uom_set_fixture = uom_set()
+    write_staged: list[dict] = []
+
+    def capture_write_batch(staged_records: list[dict]) -> list[dict]:
+        write_staged.extend(staged_records)
+        return [{"record": record, "response": None} for record in staged_records]
+
+    with patch.object(
+        vendor_credits_sink, "_execute_lookup_queries", return_value=[{"matches": [], "query_failed": False}]
+    ), patch.object(
+        vendor_credits_sink,
+        "_execute_write_batch",
+        side_effect=capture_write_batch,
+    ), patch.object(
+        vendor_credits_sink,
+        "_validate_request_element",
+        return_value=None,
+    ), patch.object(
+        vendor_credits_sink,
+        "send_qbxml_batch",
+        side_effect=[
+            {"ItemQueryRs": [{"@requestID": "uom-item-1", "@statusCode": "0", "ItemInventoryRet": item}]},
+            {"UnitOfMeasureSetQueryRs": [{"@requestID": "uom-uom-set-1", "@statusCode": "0", "UnitOfMeasureSetRet": uom_set_fixture}]},
+        ],
+    ):
+        vendor_credits_sink.make_batch_request([staged])
+
+    assert len(write_staged) == 1
+    assert write_staged[0]["payload"]["ItemLineAdd"][0]["Quantity"] == "20"
+
+
 def test_make_batch_request_uom_item_lookup_failure_fails_record(invoices_sink):
     """Fail records when UOM item lookup transport fails, without caching a miss."""
 
