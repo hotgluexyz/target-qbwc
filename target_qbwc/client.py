@@ -209,8 +209,9 @@ class QbwcBatchSink(QbwcTransportMixin, HotglueBatchSink):
         For this target the PK records are either ListID or TxnID.
         The fix was to leave GLOBAL_PRIMARY_KEY = 'id' (default) and then here we convert id to id_field
         """
-        if self.id_field and 'id' in payload and not payload.get(self.id_field):
-            payload[self.id_field] = payload.pop('id')
+        id = payload.pop('id', None)
+        if self.id_field and id and not payload.get(self.id_field):
+            payload[self.id_field] = id
         return payload
 
     def process_batch_record(self, record: dict, index: int) -> dict:
