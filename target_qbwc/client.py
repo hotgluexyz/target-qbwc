@@ -70,7 +70,7 @@ class QbwcTransportMixin:
         if isinstance(error, (QBWCAuthenticationError, QBWCNotAuthenticatedError)):
             return InvalidCredentialsError(str(error))
         if isinstance(error, QBWCRequestTimeoutError):
-            return RetriableAPIError(
+            return InvalidCredentialsError(
                 "QuickBooks Web Connector did not complete the request before it timed out. "
                 "Verify that QuickBooks Desktop is open with the company file available and "
                 "QuickBooks Web Connector is running and connected, then retry. "
