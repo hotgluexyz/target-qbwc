@@ -7,6 +7,7 @@ from pathlib import Path
 from hotglue_etl_exceptions import InvalidPayloadError
 from hotglue_singer_sdk.exceptions import FatalAPIError, RetriableAPIError
 from qbwc_common import (
+    QBWCRequestTimeoutError,
     decode_response,
     load_qbd_xml_schemas,
     normalize_rs_list,
@@ -211,3 +212,22 @@ def test_map_qbwc_error_is_idempotent(add_only_customer_sink: AddOnlyCustomerSin
 
     assert add_only_customer_sink.map_qbwc_error(timeout) is timeout
     assert add_only_customer_sink.map_qbwc_error(fatal) is fatal
+
+
+def test_map_qbwc_request_timeout_explains_how_to_restore_connection(
+    add_only_customer_sink: AddOnlyCustomerSink,
+):
+    """Turn a QBWC request timeout into an actionable retriable error."""
+    timeout = QBWCRequestTimeoutError(
+        "Request 2b7cdcd6-ac56-4510-8b55-fd7b4c3fecc9 timed out after 1200 seconds"
+    )
+
+    mapped = add_only_customer_sink.map_qbwc_error(timeout)
+
+    assert isinstance(mapped, RetriableAPIError)
+    assert str(mapped) == (
+        "QuickBooks Web Connector did not complete the request before it timed out. "
+        "Verify that QuickBooks Desktop is open with the company file available and "
+        "QuickBooks Web Connector is running and connected, then retry. "
+        "Details: Request 2b7cdcd6-ac56-4510-8b55-fd7b4c3fecc9 timed out after 1200 seconds"
+    )
