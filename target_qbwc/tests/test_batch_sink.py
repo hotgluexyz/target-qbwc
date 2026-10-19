@@ -15,6 +15,7 @@ from qbwc_common import (
 )
 
 from target_qbwc.sinks import CustomersSink
+from target_qbwc.exceptions import RetriableInvalidCredentialsError
 from target_qbwc.tests.conftest import AddOnlyCustomerSink
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
@@ -224,6 +225,8 @@ def test_map_qbwc_request_timeout_explains_how_to_restore_connection(
 
     mapped = add_only_customer_sink.map_qbwc_error(timeout)
 
+    assert isinstance(mapped, RetriableInvalidCredentialsError)
+    assert isinstance(mapped, RetriableAPIError)
     assert isinstance(mapped, InvalidCredentialsError)
     assert str(mapped) == (
         "QuickBooks Web Connector did not complete the request before it timed out. "

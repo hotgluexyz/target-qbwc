@@ -28,6 +28,8 @@ from qbwc_common import (
     parse_rs_element,
 )
 
+from target_qbwc.exceptions import RetriableInvalidCredentialsError
+
 DEFAULT_BATCH_SIZE = 100
 WRITE_DECODE_VALIDATION = "skip"
 
@@ -70,7 +72,7 @@ class QbwcTransportMixin:
         if isinstance(error, (QBWCAuthenticationError, QBWCNotAuthenticatedError)):
             return InvalidCredentialsError(str(error))
         if isinstance(error, QBWCRequestTimeoutError):
-            return InvalidCredentialsError(
+            return RetriableInvalidCredentialsError(
                 "QuickBooks Web Connector did not complete the request before it timed out. "
                 "Verify that QuickBooks Desktop is open with the company file available and "
                 "QuickBooks Web Connector is running and connected, then retry. "
