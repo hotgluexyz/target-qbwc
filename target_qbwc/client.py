@@ -210,9 +210,23 @@ class QbwcBatchSink(QbwcTransportMixin, HotglueBatchSink):
                 self.logger.info("%s created %s", self.name, detail)
         super().update_state(state, is_duplicate=is_duplicate, record=record)
 
+    def replace_id_field(self, payload: dict) -> dict:
+        """
+        Replace the id field with the id_field.
+        This is a workaround to fix the issue that the SDK only supports GLOBAL_PRIMARY_KEY
+        for matching externalId -> id (GLOBAL_PRIMARY_KEY) mapping.
+        For this target the PK records are either ListID or TxnID.
+        The fix was to leave GLOBAL_PRIMARY_KEY = 'id' (default) and then here we convert id to id_field
+        """
+        id = payload.pop('id', None)
+        if self.id_field and id and not payload.get(self.id_field):
+            payload[self.id_field] = id
+        return payload
+
     def process_batch_record(self, record: dict, index: int) -> dict:
         """Strip metadata, build the QBXML request element and stage state context."""
         payload, external_id = self.strip_hotglue_metadata(record)
+        payload = self.replace_id_field(payload)
         payload = self.build_request_element(payload)
         request_element = self._build_request_element(payload, index)
         preprocess_error = self._validate_request_element(request_element)

@@ -166,6 +166,7 @@ class QbwcUpsertBatchSink(QbwcBatchSink):
     def process_batch_record(self, record: dict, index: int) -> dict:
         """Strip metadata and stage the payload without add-only XSD validation."""
         payload, external_id = self.strip_hotglue_metadata(record)
+        payload = self.replace_id_field(payload)
         payload = self.build_request_element(payload)
         return {
             "request_id": str(index),
