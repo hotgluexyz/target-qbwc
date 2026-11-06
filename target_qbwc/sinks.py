@@ -185,3 +185,19 @@ class JournalEntriesSink(QbwcTxnUpsertBatchSink):
 
     name = "journal_entry"
     qbxml_entity = "JournalEntry"
+
+
+class ReceivePaymentsSink(QbwcTxnUpsertBatchSink):
+    """AR: applies customer payments to invoices (ReceivePaymentAdd).
+    """
+
+    name = "receive_payment"
+    qbxml_entity = "ReceivePayment"
+
+
+class BillPaymentChecksSink(QbwcTxnUpsertBatchSink):
+    """AP: applies vendor check payments to bills (BillPaymentCheckAdd).
+    """
+
+    name = "bill_payment_check"
+    qbxml_entity = "BillPaymentCheck"

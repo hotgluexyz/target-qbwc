@@ -26,6 +26,8 @@ STREAM_ORDER: tuple[str, ...] = (
     "invoice",
     "credit_memo",
     "bill",
+    "receive_payment",  # AR — after invoices
+    "bill_payment_check",  # AP — after bills
     "sales_receipt",
     "vendor_credit",
     "journal_entry",
