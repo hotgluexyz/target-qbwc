@@ -17,6 +17,7 @@ from target_qbwc.client import DEFAULT_BATCH_SIZE
 from target_qbwc.uom_lookup import UomLookupCache
 from target_qbwc.input import collect_input, run_ordered_streams
 from target_qbwc.sinks import (
+    BillPaymentChecksSink,
     BillsSink,
     CreditMemosSink,
     CustomersSink,
@@ -26,6 +27,7 @@ from target_qbwc.sinks import (
     ItemSalesTaxSink,
     JournalEntriesSink,
     PurchaseOrdersSink,
+    ReceivePaymentsSink,
     SalesOrdersSink,
     SalesReceiptsSink,
     VendorCreditsSink,
@@ -50,6 +52,8 @@ class TargetQbwc(TargetHotglue):
         SalesReceiptsSink,
         CreditMemosSink,
         BillsSink,
+        ReceivePaymentsSink,
+        BillPaymentChecksSink,
         VendorCreditsSink,
         JournalEntriesSink,
     ]

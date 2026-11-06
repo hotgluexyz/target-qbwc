@@ -139,12 +139,16 @@ class QbwcBatchSink(QbwcTransportMixin, HotglueBatchSink):
         return record
 
     def strip_hotglue_metadata(self, record: dict) -> tuple[dict, str | None]:
-        """Remove Hotglue fields before QBXML encoding."""
+        """Remove Hotglue fields before QBXML encoding.
+
+        Drops externalId and SDK-injected id 
+        """
         payload = dict(record)
         external_id_key = self._target.EXTERNAL_ID_KEY
         external_id = payload.pop(external_id_key, None) or payload.pop(
             external_id_key.lower(), None
         )
+        payload.pop("id", None)
         return payload, external_id
 
     def _build_request_element(self, payload: dict, index: int) -> dict[str, Any]:

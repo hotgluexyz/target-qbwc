@@ -74,6 +74,22 @@ def test_strip_hotglue_metadata_removes_external_id(customers_sink: CustomersSin
     assert payload == {"Name": "HG-TEST-001"}
 
 
+def test_strip_hotglue_metadata_removes_snapshot_id(customers_sink: CustomersSink):
+    """Strip SDK-injected id from id snapshots so qbXML XSD does not see it."""
+    payload, external_id = customers_sink.strip_hotglue_metadata(
+        {
+            "externalId": "cust-001",
+            "id": "800000DC-1797353804",
+            "Name": "HG-TEST-001",
+            "CompanyName": "Test Co",
+        }
+    )
+
+    assert external_id == "cust-001"
+    assert "id" not in payload
+    assert payload == {"Name": "HG-TEST-001", "CompanyName": "Test Co"}
+
+
 def test_add_only_process_batch_record_includes_request_element(
     add_only_customer_sink: AddOnlyCustomerSink,
 ):

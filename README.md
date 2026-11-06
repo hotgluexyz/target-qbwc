@@ -99,7 +99,7 @@ Sample  `customer.json`:
 3. **Both** — when stdin has Singer lines and `input_path` has entity JSON, records are merged per stream. **JSON first, then Singer.**
 4. **Stream order** — streams always run in this order, one stream at a time (each sink is drained before the next starts):
 
-   `customer` → `vendor` → `item_inventory` → `item_noninventory` → `item_sales_tax` → `purchase_order` → `sales_order` → `invoice` → `credit_memo` → `bill` → `sales_receipt` → `vendor_credit` → `journal_entry`
+   `customer` → `vendor` → `item_inventory` → `item_noninventory` → `item_sales_tax` → `purchase_order` → `sales_order` → `invoice` → `credit_memo` → `bill` → `receive_payment` → `bill_payment_check` → `sales_receipt` → `vendor_credit` → `journal_entry`
 
    Input file or line order does not matter.
 
@@ -168,8 +168,18 @@ Each outcome is written to `bookmarks.<stream>` and rolled up in `summary.<strea
 | `sales_receipt` | `SalesReceiptAddRq` | `SalesReceiptModRq` | `TxnID`, then `RefNumber` | `TxnID` |
 | `credit_memo` | `CreditMemoAddRq` | `CreditMemoModRq` | `TxnID`, then `RefNumber` | `TxnID` |
 | `bill` | `BillAddRq` | `BillModRq` | `TxnID`, then `RefNumber` (RefNumber scoped by `VendorRef`) | `TxnID` |
+| `receive_payment` | `ReceivePaymentAddRq` | `ReceivePaymentModRq` | `TxnID`, then `RefNumber` | `TxnID` |
+| `bill_payment_check` | `BillPaymentCheckAddRq` | `BillPaymentCheckModRq` | `TxnID`, then `RefNumber` | `TxnID` |
 | `vendor_credit` | `VendorCreditAddRq` | `VendorCreditModRq` | `TxnID`, then `RefNumber` | `TxnID` |
 | `journal_entry` | `JournalEntryAddRq` | `JournalEntryModRq` | `TxnID`, then `RefNumber` | `TxnID` |
+
+**Payment streams (AR vs AP):**
+
+| Stream | Direction | Applies to | Typical Re-Leased source |
+|---|---|---|---|
+| `receive_payment` | **AR** — money from a customer | QBD **invoices** (`ReceivePaymentAdd`) | ACCREC invoice payments |
+| `bill_payment_check` | **AP** — money to a vendor | QBD **bills** (`BillPaymentCheckAdd`) | ACCPAY bill payments |
+
 
 ### Unit of measure quantity rescaling
 

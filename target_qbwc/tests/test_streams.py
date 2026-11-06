@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from target_qbwc.sinks import (
+    BillPaymentChecksSink,
     BillsSink,
     CreditMemosSink,
     CustomersSink,
@@ -14,6 +15,7 @@ from target_qbwc.sinks import (
     ItemSalesTaxSink,
     JournalEntriesSink,
     PurchaseOrdersSink,
+    ReceivePaymentsSink,
     SalesOrdersSink,
     SalesReceiptsSink,
     VendorCreditsSink,
@@ -39,6 +41,8 @@ TXN_SINKS = [
     (CreditMemosSink, "credit_memo", "CreditMemo", "TxnID"),
     (PurchaseOrdersSink, "purchase_order", "PurchaseOrder", "TxnID"),
     (BillsSink, "bill", "Bill", "TxnID"),
+    (ReceivePaymentsSink, "receive_payment", "ReceivePayment", "TxnID"),
+    (BillPaymentChecksSink, "bill_payment_check", "BillPaymentCheck", "TxnID"),
     (VendorCreditsSink, "vendor_credit", "VendorCredit", "TxnID"),
     (JournalEntriesSink, "journal_entry", "JournalEntry", "TxnID"),
 ]
